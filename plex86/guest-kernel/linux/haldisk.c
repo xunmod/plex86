@@ -8,6 +8,7 @@
  * Jonathan Corbet, published by O'Reilly & Associates.
  */
 
+// Fixme: make all possible symbols static?
 
 #include <linux/config.h>
 #include <linux/module.h>
@@ -31,7 +32,7 @@ int haldisk_major; /* must be declared before including blk.h */
 #define HALDISK_SHIFT 4                         /* max 16 partitions  */
 #define HALDISK_MAXNRDEV 4                      /* max 4 device units */
 #define DEVICE_NR(device) (MINOR(device)>>HALDISK_SHIFT)
-#define DEVICE_NAME "pd"                      /* name for messaging */
+#define DEVICE_NAME "hald"
 #define DEVICE_INTR haldisk_intrptr         /* pointer to the bottom half */
 #define DEVICE_NO_RANDOM                  /* no entropy to contribute */
 #define DEVICE_REQUEST haldisk_request
@@ -88,12 +89,12 @@ int haldisk_major; /* must be declared before including blk.h */
  */
 
 typedef struct Haldisk_Dev {
-   int size;
-   int usage;
-   struct timer_list timer;
-   spinlock_t lock;
-   u8 *data;
-} Haldisk_Dev;
+  int size;
+  int usage;
+  struct timer_list timer;
+  spinlock_t lock;
+  u8 *data;
+  } Haldisk_Dev;
 
 
 
@@ -139,26 +140,52 @@ int haldisk_blksize, haldisk_irq;
 Haldisk_Dev *haldisk_devices = NULL;
 int *haldisk_sizes = NULL;
 
-int haldisk_revalidate(kdev_t i_rdev);
-struct block_device_operations haldisk_bdops;
+static int haldisk_open(struct inode *inode, struct file *filp);
+static int haldisk_release(struct inode *inode, struct file *filp);
+static int haldisk_ioctl(struct inode *inode, struct file *filp,
+                         unsigned int cmd, unsigned long arg);
+static int haldisk_revalidate(kdev_t i_rdev);
+static int haldisk_check_change(kdev_t i_rdev);
+static void haldisk_expires(unsigned long data);
+static Haldisk_Dev *haldisk_locate_device(const struct request *req);
+static int haldisk_transfer(Haldisk_Dev *device, const struct request *req);
+static void haldisk_request(request_queue_t *q);
 
-struct gendisk haldisk_gendisk = {
+static void haldisk_irqdriven_request(request_queue_t *q);
+static void haldisk_interrupt(unsigned long unused);
+
+// External scope:
+int haldisk_init(void);
+void haldisk_cleanup(void);
+
+static struct block_device_operations haldisk_bdops = {
+  open:       haldisk_open,
+  release:    haldisk_release,
+  ioctl:      haldisk_ioctl,
+  revalidate: haldisk_revalidate,
+  check_media_change: haldisk_check_change,
+  };
+
+
+static struct gendisk haldisk_gendisk = {
   major:              0,              /* Major number assigned later */
-  major_name:         "pd",           /* Name of the major device */
+  major_name:         DEVICE_NAME,    /* Name of the major device */
   minor_shift:        HALDISK_SHIFT,    /* Shift to get device number */
   max_p:              1 << HALDISK_SHIFT, /* Number of partitions */
   fops:               &haldisk_bdops,   /* Block dev operations */
   // everything else is dynamic.
   };
 
-struct hd_struct *haldisk_partitions = NULL;
+static struct hd_struct *haldisk_partitions = NULL;
 
 /*
  * Flag used in "irq driven" mode to mark when we have operations
  * outstanding.
  */
-volatile int haldisk_busy = 0;
+static volatile int haldisk_busy = 0;
 
+/* The fake interrupt-driven request */
+static struct timer_list haldisk_timer; /* the engine for async invocation */
 
 /*
  * Open and close
@@ -252,8 +279,8 @@ void haldisk_expires(unsigned long data)
  * The ioctl() implementation
  */
 
-int haldisk_ioctl (struct inode *inode, struct file *filp,
-                 unsigned int cmd, unsigned long arg)
+int haldisk_ioctl(struct inode *inode, struct file *filp,
+                  unsigned int cmd, unsigned long arg)
 {
     int err, size;
     struct hd_geometry geo;
@@ -340,18 +367,6 @@ int haldisk_check_change(kdev_t i_rdev)
 
 
 
-/*
- * The file operations
- */
-
-struct block_device_operations haldisk_bdops = {
-    open:       haldisk_open,
-    release:    haldisk_release,
-    ioctl:      haldisk_ioctl,
-    revalidate: haldisk_revalidate,
-    check_media_change: haldisk_check_change,
-};
-
 
 /*
  * Note no locks taken out here.  In a worst case scenario, we could drop
@@ -387,7 +402,7 @@ int haldisk_revalidate(kdev_t i_rdev)
 /*
  * Find the device for this request.
  */
-static Haldisk_Dev *haldisk_locate_device(const struct request *req)
+Haldisk_Dev *haldisk_locate_device(const struct request *req)
 {
     int devno;
     Haldisk_Dev *device;
@@ -408,7 +423,7 @@ static Haldisk_Dev *haldisk_locate_device(const struct request *req)
 /*
  * Perform an actual transfer.
  */
-static int haldisk_transfer(Haldisk_Dev *device, const struct request *req)
+int haldisk_transfer(Haldisk_Dev *device, const struct request *req)
 {
     int size, minor = MINOR(req->rq_dev);
     u8 *ptr;
@@ -472,7 +487,6 @@ void haldisk_request(request_queue_t *q)
 /*
  * The fake interrupt-driven request
  */
-struct timer_list haldisk_timer; /* the engine for async invocation */
 
 void haldisk_irqdriven_request(request_queue_t *q)
 {
