@@ -714,7 +714,10 @@ executeLoop:
         goto executeLoop;
 
       case MonReqHalCall:
-        halCall();
+        if ( !halCall() ) {
+          fprintf(stderr, "HAL call failed.\n");
+          break;
+          }
         goto executeLoop;
 
       case MonReqPanic:
@@ -737,7 +740,6 @@ executeLoop:
     }
 
   plex86TearDown();
-
   return(0);
 }
 

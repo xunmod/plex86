@@ -22,7 +22,7 @@ all:
 
 endif
 
-$(EXE): linuxvm.o hal-user.o
+$(EXE): linuxvm.o hal-user.o halnet.o haldisk.o halconsole.o
 	$(HOST_USER_CC) -o $@ $^
 
 clean: 

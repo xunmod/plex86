@@ -407,6 +407,17 @@ int halDisk_transfer(halDiskDev_t *device, const struct request *req)
     }
 }
 
+  void
+halDiskGetDiskInfo( unsigned phyAddr )
+{
+  __asm__ volatile (
+    "int $0xff"
+    :
+    : "a" (HalCallDiskGetInfo),
+      "b" (phyAddr)
+    );
+}
+
   unsigned
 halDiskWrite(unsigned unit, unsigned sector, unsigned phyAddr)
 {
@@ -530,20 +541,6 @@ void halDisk_interrupt(unsigned long unused)
   spin_unlock_irqrestore(&io_request_lock, flags);
 }
 
-
-//
-// HAL features:
-//
-  void
-halDiskGetDiskInfo( unsigned phyAddr )
-{
-  __asm__ volatile (
-    "int $0xff"
-    :
-    : "a" (HalCallDiskGetInfo),
-      "b" (phyAddr)
-    );
-}
 
 
 /*
