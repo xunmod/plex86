@@ -9,6 +9,8 @@
  */
 
 // Fixme: make all possible symbols static?
+// Fixme: blocks vs sectors.  I assume blks=1024,sector=512 throughout.
+// Fixme: do we need dev->usage any more.  Was for removable drives.
 
 #include <linux/config.h>
 #include <linux/module.h>
@@ -75,9 +77,7 @@ int halDisk_major; /* must be declared before including blk.h */
 
 
 #define HALDISK_MAJOR 0       /* dynamic major by default */
-#define HALDISK_DEVS 2        /* two disks */
 #define HALDISK_RAHEAD 2      /* two sectors */
-#define HALDISK_SIZE 2048     /* two megs each */
 #define HALDISK_BLKSIZE 1024  /* 1k blocks */
 #define HALDISK_HARDSECT 512  /* 512-byte hardware sectors */
 
@@ -88,10 +88,8 @@ int halDisk_major; /* must be declared before including blk.h */
  */
 
 typedef struct halDiskDev_t {
-  int size;
   int usage;
   spinlock_t lock;
-  u8 *data;
   } halDiskDev_t;
 
 
@@ -108,9 +106,7 @@ typedef struct halDiskDev_t {
  * HALDISK_DEBUG is defined.
  */
 static int major    = HALDISK_MAJOR;
-static int devs     = HALDISK_DEVS;
 static int rahead   = HALDISK_RAHEAD;
-static int size     = HALDISK_SIZE;
 static int irq      = 0;
 
 static int blksize  = HALDISK_BLKSIZE;
@@ -120,20 +116,16 @@ MODULE_DESCRIPTION("Plex86 guest disk driver (HAL)");
 MODULE_LICENSE("GPL");
 
 MODULE_PARM(major, "i");
-MODULE_PARM(devs, "i");
 MODULE_PARM(rahead, "i");
-MODULE_PARM(size, "i");
 MODULE_PARM(blksize, "i");
 MODULE_PARM(irq, "i");
 
 MODULE_PARM_DESC(major, "Fixme:");
-MODULE_PARM_DESC(devs, "Fixme:");
 MODULE_PARM_DESC(rahead, "Fixme:");
-MODULE_PARM_DESC(size, "Fixme:");
 MODULE_PARM_DESC(blksize, "Fixme:");
 MODULE_PARM_DESC(irq, "Fixme:");
 
-int halDisk_devs, halDisk_rahead, halDisk_size;
+int halDisk_rahead;
 int halDisk_blksize, halDisk_irq;
 
 /* The following items are obtained through kmalloc() in halDisk_init() */
@@ -185,10 +177,17 @@ static volatile int halDisk_busy = 0;
 /* The fake interrupt-driven request */
 static struct timer_list halDisk_timer; /* the engine for async invocation */
 
+//
 // HAL interface stuff.
-static halDiskGeoms_t halDiskGeoms;
-static void halDiskGetDiskGeoms( halDiskGeoms_t * );
-static halDiskGuestRwArea_t *halDiskGuestRwArea[HalDiskMaxDisks];
+//
+static halDiskInfo_t *halDiskInfo = 0;
+static halDiskGuestRwArea_t *halDiskRwArea[HalDiskMaxDisks];
+
+static void halDiskGetDiskInfo(unsigned phyAddr);
+static unsigned halDiskWrite(unsigned unit, unsigned sector, unsigned phyAddr);
+static unsigned halDiskRead(unsigned unit, unsigned sector, unsigned phyAddr);
+static unsigned halDiskCleanup(void);
+
 
 /*
  * Open and close
@@ -197,27 +196,16 @@ static halDiskGuestRwArea_t *halDiskGuestRwArea[HalDiskMaxDisks];
 int halDisk_open (struct inode *inode, struct file *filp)
 {
   halDiskDev_t *dev; /* device information */
-  int num = DEVICE_NR(inode->i_rdev);
+  int unit = DEVICE_NR(inode->i_rdev);
 
-  if (num >= halDisk_devs) return -ENODEV;
-  dev = halDisk_devices + num;
+  if (unit >= HalDiskMaxDisks)
+    return -ENODEV;
+  if (halDiskInfo[unit].exists==0)
+    return -ENODEV;
+  dev = halDisk_devices + unit;
 
   spin_lock(&dev->lock);
 
-  /*
-   * If no data area is there, allocate it. Clear its head as
-   * well to prevent memory corruption due to bad partition info.
-   */
-  if (!dev->data) {
-    dev->data = vmalloc(dev->size);
-    memset(dev->data,0,2048);
-  }
-  if (!dev->data)
-  {
-    spin_unlock(&dev->lock);
-    return -ENOMEM;
-  }
-  
   dev->usage++;
   MOD_INC_USE_COUNT;
   spin_unlock(&dev->lock);
@@ -299,18 +287,18 @@ int halDisk_ioctl(struct inode *inode, struct file *filp,
      * multiple of 64 (32k): tell we have 16 sectors, 4 heads,
      * whatever cylinders. Tell also that data starts at sector. 4.
      */
-    int devNo = DEVICE_NR(inode->i_rdev);
-    if ( devNo >= HalDiskMaxDisks) {
+    int unit = DEVICE_NR(inode->i_rdev);
+    if ( unit >= HalDiskMaxDisks) {
       return -EFAULT; // Fixme: use correct error here.
       }
-    printk(KERN_WARNING "halDisk: GETGEO: devNo=%u\n", devNo);
+    printk(KERN_WARNING "halDisk: GETGEO: unit=%u\n", unit);
     err = ! access_ok(VERIFY_WRITE, arg, sizeof(geo));
     if (err)
       return -EFAULT;
-    geo.cylinders = halDiskGeoms.geom[devNo].cylinders;
-    geo.heads     = halDiskGeoms.geom[devNo].heads;
-    geo.sectors   = halDiskGeoms.geom[devNo].spt;
-    geo.start     = halDiskGeoms.geom[devNo].start;
+    geo.cylinders = halDiskInfo[unit].geom.cylinders;
+    geo.heads     = halDiskInfo[unit].geom.heads;
+    geo.sectors   = halDiskInfo[unit].geom.spt;
+    geo.start     = halDiskInfo[unit].geom.start;
 
     if (copy_to_user((void *) arg, &geo, sizeof(geo)))
       return -EFAULT;
@@ -337,17 +325,19 @@ int halDisk_revalidate(kdev_t i_rdev)
   /* first partition, # of partitions */
   int part1 = (DEVICE_NR(i_rdev) << HALDISK_SHIFT) + 1;
   int npart = (1 << HALDISK_SHIFT) -1;
+  unsigned unit;
 
   /* first clear old partition information */
   memset(halDisk_gendisk.sizes+part1, 0, npart*sizeof(int));
   memset(halDisk_gendisk.part +part1, 0, npart*sizeof(struct hd_struct));
+  unit = DEVICE_NR(i_rdev);
   halDisk_gendisk.part[DEVICE_NR(i_rdev) << HALDISK_SHIFT].nr_sects =
-      halDisk_size << 1;
+      halDiskInfo[unit].geom.numSectors;
 
   /* then fill new info */
   printk(KERN_INFO "Haldisk partition check: (%d) ", DEVICE_NR(i_rdev));
   register_disk(&halDisk_gendisk, i_rdev, HalDiskMaxDisks, &halDisk_bdops,
-          halDisk_size << 1);
+          halDiskInfo[unit].geom.numSectors);
   return 0;
 }
 
@@ -363,18 +353,18 @@ int halDisk_revalidate(kdev_t i_rdev)
  */
 halDiskDev_t *halDisk_locate_device(const struct request *req)
 {
-  int devno;
+  int unit;
   halDiskDev_t *device;
 
   /* Check if the minor number is in range */
-  devno = DEVICE_NR(req->rq_dev);
-  if (devno >= halDisk_devs) {
+  unit = DEVICE_NR(req->rq_dev);
+  if ( (unit>=HalDiskMaxDisks) || (halDiskInfo[unit].exists==0) ) {
     static int count = 0;
     if (count++ < 5) /* print the message at most five times */
       printk(KERN_WARNING "halDisk: request for unknown device\n");
     return NULL;
-  }
-  device = halDisk_devices + devno;
+    }
+  device = halDisk_devices + unit;
   return device;
 }
 
@@ -384,12 +374,14 @@ halDiskDev_t *halDisk_locate_device(const struct request *req)
  */
 int halDisk_transfer(halDiskDev_t *device, const struct request *req)
 {
-  int size, minor = MINOR(req->rq_dev);
-  u8 *ptr;
+  int minor = MINOR(req->rq_dev);
+  unsigned sector, sectorCount, i;
+  unsigned unit = DEVICE_NR(req->rq_dev);
+  unsigned lAddr, pAddr;
   
-  ptr = device->data +
-      (halDisk_partitions[minor].start_sect + req->sector)*HALDISK_HARDSECT;
-  size = req->current_nr_sectors*HALDISK_HARDSECT;
+  sector = halDisk_partitions[minor].start_sect + req->sector;
+  sectorCount = req->current_nr_sectors;
+
   /*
    * Make sure that the transfer fits within the device.
    */
@@ -405,15 +397,74 @@ int halDisk_transfer(halDiskDev_t *device, const struct request *req)
    */
   switch(req->cmd) {
     case READ:
-      memcpy(req->buffer, ptr, size); /* from halDisk to buffer */
+      lAddr = (unsigned) halDiskRwArea[unit]->rwBuffer;
+      pAddr = lAddr - PAGE_OFFSET;
+      for (i=0; i<sectorCount; i++) {
+        // Fixme: act on return value of halDiskRead
+        halDiskRead(unit, sector+i, pAddr);
+        memcpy(req->buffer, (void*) lAddr, sectorCount*512);
+        }
       return 1;
+
     case WRITE:
-      memcpy(ptr, req->buffer, size); /* from buffer to halDisk */
+      lAddr = (unsigned) halDiskRwArea[unit]->rwBuffer;
+      pAddr = lAddr - PAGE_OFFSET;
+      for (i=0; i<sectorCount; i++) {
+        memcpy((void*) lAddr, req->buffer, sectorCount*512);
+        // Fixme: act on return value of halDiskWrite
+        halDiskWrite(unit, sector+i, pAddr);
+        }
       return 1;
+
     default:
       /* can't happen */
       return 0;
     }
+}
+
+  unsigned
+halDiskWrite(unsigned unit, unsigned sector, unsigned phyAddr)
+{
+  unsigned result;
+
+  __asm__ volatile (
+    "int $0xff"
+    : "=a" (result)
+    : "0" (HalCallDiskWrite),
+      "b" (phyAddr),
+      "c" (sector),
+      "d" (unit)
+    );
+  return(result);
+}
+
+  unsigned
+halDiskRead(unsigned unit, unsigned sector, unsigned phyAddr)
+{
+  unsigned result;
+
+  __asm__ volatile (
+    "int $0xff"
+    : "=a" (result)
+    : "0" (HalCallDiskRead),
+      "b" (phyAddr),
+      "c" (sector),
+      "d" (unit)
+    );
+  return(result);
+}
+
+  unsigned
+halDiskCleanup(void)
+{
+  unsigned result;
+
+  __asm__ volatile (
+    "int $0xff"
+    : "=a" (result)
+    : "0" (HalCallDiskCleanup)
+    );
+  return(result);
 }
 
 
@@ -499,26 +550,14 @@ void halDisk_interrupt(unsigned long unused)
 // HAL features:
 //
   void
-halDiskGetDiskGeoms( halDiskGeoms_t *geoms )
+halDiskGetDiskInfo( unsigned phyAddr )
 {
-  unsigned i;
-
-  // For each possible disk unit supported by this driver, request
-  // the disk geometry from the host via a HAL call.  Disk geometry
-  // is needed by an ioctl() call.  We also gather whether the particular
-  // disk unit is to be supported, as chosen by the host user application.
-  for (i=0; i<HalDiskMaxDisks; i++) {
-    __asm__ volatile (
-      "int $0xff"
-      : "=a" (halDiskGeoms.geom[i].exists),
-        "=b" (halDiskGeoms.geom[i].cylinders),
-        "=c" (halDiskGeoms.geom[i].heads),
-        "=d" (halDiskGeoms.geom[i].spt)
-      : "0" (HalCallDiskGetGeoms),
-        "1" (i)
-      );
-    halDiskGeoms.geom[i].start = 4; // Fixme: what to do with this?
-    }
+  __asm__ volatile (
+    "int $0xff"
+    :
+    : "a" (HalCallDiskGetInfo),
+      "b" (phyAddr)
+    );
 }
 
 
@@ -532,26 +571,35 @@ int halDisk_init(void)
 
 // Fixme: Need check of HalDiskMaxDisks vs devs
 
+  // Allocate a page of memory for the disk info structure, to be
+  // communicated with the host via a HAL call.  Memory is zeroed out for us.
+  halDiskInfo = (halDiskInfo_t *) get_zeroed_page(GFP_KERNEL | __GFP_DMA);
+  // Fixme: check return status of get_zeroed_page().
+
   // Get the disk geometry of supported disks from the host, via a HAL call.
-  memset(&halDiskGeoms, 0, sizeof(halDiskGeoms)); // Start zeroed.
-  halDiskGetDiskGeoms( &halDiskGeoms );
+  // Pass in the *physical* address of the page containing the info structure.
+  // The host application only deals with physical addresses, which is why
+  // we need to assign a separate page so the structure is aligned within
+  // the page.
+  halDiskGetDiskInfo( ((unsigned) halDiskInfo) - PAGE_OFFSET );
 
   for (i=0; i<HalDiskMaxDisks; i++) {
-    if ( halDiskGeoms.geom[i].exists ) {
+    if ( halDiskInfo[i].exists ) {
       // This disk exists.  Create a RW area for it for the host<-->guest
       // communications.
       printk(KERN_WARNING "halDisk(%u): Geom: C=%u/H=%u/SPT=%u.\n",
              i,
-             halDiskGeoms.geom[i].cylinders,
-             halDiskGeoms.geom[i].heads,
-             halDiskGeoms.geom[i].spt
+             halDiskInfo[i].geom.cylinders,
+             halDiskInfo[i].geom.heads,
+             halDiskInfo[i].geom.spt
              );
-      halDiskGuestRwArea[i] = (halDiskGuestRwArea_t *)
+      halDiskRwArea[i] = (halDiskGuestRwArea_t *)
           get_zeroed_page(GFP_KERNEL | __GFP_DMA);
+      // Fixme: check return status of get_zeroed_page().
       }
     else {
       // This disk does not exist.  No RW area allocated.
-      halDiskGuestRwArea[i] = 0;
+      halDiskRwArea[i] = 0;
       }
     }
 
@@ -561,9 +609,7 @@ int halDisk_init(void)
    */
 
   halDisk_major  = major;
-  halDisk_devs   = devs;
   halDisk_rahead   = rahead;
-  halDisk_size   = size;
   halDisk_blksize  = blksize;
 
   /*
@@ -583,15 +629,15 @@ int halDisk_init(void)
    * can be specified at load time
    */
 
-  halDisk_devices = kmalloc(halDisk_devs * sizeof (halDiskDev_t), GFP_KERNEL);
+  halDisk_devices = kmalloc(HalDiskMaxDisks * sizeof (halDiskDev_t),
+                            GFP_KERNEL);
   if (!halDisk_devices)
     goto fail_malloc;
-  memset(halDisk_devices, 0, halDisk_devs * sizeof (halDiskDev_t));
-  for (i=0; i < halDisk_devs; i++) {
+  memset(halDisk_devices, 0, HalDiskMaxDisks * sizeof (halDiskDev_t));
+  for (i=0; i < HalDiskMaxDisks; i++) {
     /* data and usage remain zeroed */
-    halDisk_devices[i].size = blksize * halDisk_size;
     spin_lock_init(&halDisk_devices[i].lock);
-  }
+    }
 
   /*
    * Fixme: Assign the other needed values: request, rahead, size, blksize,
@@ -604,31 +650,31 @@ int halDisk_init(void)
   read_ahead[major] = halDisk_rahead;
   result = -ENOMEM; /* for the possible errors */
 
-  halDisk_sizes = kmalloc( (halDisk_devs << HALDISK_SHIFT) * sizeof(int),
+  halDisk_sizes = kmalloc( (HalDiskMaxDisks << HALDISK_SHIFT) * sizeof(int),
               GFP_KERNEL);
   if (!halDisk_sizes)
     goto fail_malloc;
 
   /* Start with zero-sized partitions, and correctly sized units */
-  memset(halDisk_sizes, 0, (halDisk_devs << HALDISK_SHIFT) * sizeof(int));
-  for (i=0; i< halDisk_devs; i++)
-    halDisk_sizes[i<<HALDISK_SHIFT] = halDisk_size;
+  memset(halDisk_sizes, 0, (HalDiskMaxDisks << HALDISK_SHIFT) * sizeof(int));
+  for (i=0; i< HalDiskMaxDisks; i++)
+    halDisk_sizes[i<<HALDISK_SHIFT] = (halDiskInfo[i].geom.numSectors>>1);
   blk_size[MAJOR_NR] = halDisk_gendisk.sizes = halDisk_sizes;
 
   /* Allocate the partitions array. */
-  halDisk_partitions = kmalloc( (halDisk_devs << HALDISK_SHIFT) *
+  halDisk_partitions = kmalloc( (HalDiskMaxDisks << HALDISK_SHIFT) *
                  sizeof(struct hd_struct), GFP_KERNEL);
   if (!halDisk_partitions)
     goto fail_malloc;
 
-  memset(halDisk_partitions, 0, (halDisk_devs << HALDISK_SHIFT) *
+  memset(halDisk_partitions, 0, (HalDiskMaxDisks << HALDISK_SHIFT) *
        sizeof(struct hd_struct));
   /* fill in whole-disk entries */
-  for (i=0; i < halDisk_devs; i++) 
+  for (i=0; i < HalDiskMaxDisks; i++) 
     halDisk_partitions[i << HALDISK_SHIFT].nr_sects =
-      halDisk_size*(blksize/HALDISK_HARDSECT);
+      halDiskInfo[i].geom.numSectors;
   halDisk_gendisk.part = halDisk_partitions;
-  halDisk_gendisk.nr_real = halDisk_devs;
+  halDisk_gendisk.nr_real = HalDiskMaxDisks;
 
   /*
    * Put our gendisk structure on the list.
@@ -637,7 +683,7 @@ int halDisk_init(void)
   gendisk_head = &halDisk_gendisk; 
 
   /* dump the partition table to see it */
-  for (i=0; i < halDisk_devs << HALDISK_SHIFT; i++)
+  for (i=0; i < HalDiskMaxDisks << HALDISK_SHIFT; i++)
     PDEBUGG("part %i: beg %lx, size %lx\n", i,
          halDisk_partitions[i].start_sect,
          halDisk_partitions[i].nr_sects);
@@ -655,9 +701,9 @@ int halDisk_init(void)
     blk_init_queue(BLK_DEFAULT_QUEUE(major), halDisk_request);
 
 #ifdef NOTNOW
-  for (i = 0; i < halDisk_devs; i++)
+  for (i = 0; i < HalDiskMaxDisks; i++)
       register_disk(NULL, MKDEV(major, i), 1, &halDisk_bdops,
-              halDisk_size << 1);
+              halDiskInfo[i].geom.numSectors);
 #endif
 
 #ifndef HALDISK_DEBUG
@@ -665,7 +711,7 @@ int halDisk_init(void)
 #endif
 
   printk ("<1>halDisk: init complete, %d devs, size %d blks %d\n",
-          halDisk_devs, halDisk_size, halDisk_blksize);
+          HalDiskMaxDisks, halDiskInfo[0].geom.numSectors>>1, halDisk_blksize);
   return 0; /* succeed */
 
   fail_malloc:
@@ -689,7 +735,7 @@ void halDisk_cleanup(void)
  * just before we delete it, it will either complete or abort.  Otherwise
  * we have nasty race conditions to worry about.
  */
-  for (i = 0; i < halDisk_devs; i++) {
+  for (i = 0; i < HalDiskMaxDisks; i++) {
     halDiskDev_t *dev = halDisk_devices + i;
     spin_lock(&dev->lock);
     dev->usage++;
@@ -703,7 +749,7 @@ void halDisk_cleanup(void)
  */
   unregister_blkdev(major, "halDisk");
 
-  for (i = 0; i < (halDisk_devs << HALDISK_SHIFT); i++)
+  for (i = 0; i < (HalDiskMaxDisks << HALDISK_SHIFT); i++)
     fsync_dev(MKDEV(halDisk_major, i)); /* flush the devices */
   blk_cleanup_queue(BLK_DEFAULT_QUEUE(major));
   read_ahead[major] = 0;
@@ -723,10 +769,8 @@ void halDisk_cleanup(void)
     }
 
   /* finally, the usual cleanup */
-  for (i=0; i < halDisk_devs; i++) {
-    if (halDisk_devices[i].data)
-      vfree(halDisk_devices[i].data);
-  }
+  halDiskCleanup();
+
   kfree(halDisk_devices);
 }
 

@@ -28,6 +28,7 @@
 #include "hal.h"
 #include "hal-user.h"
 
+static Bit8u *halDiskMem[HalDiskMaxDisks]; // Fixme: remove this.
 
 //#define TUNTAP_SPEW 1
 
@@ -326,28 +327,95 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
       return;
       }
 
-    case HalCallDiskGetGeoms:
+    case HalCallDiskGetInfo:
       {
-      unsigned unit, exists, cylinders, heads, spt;
+      unsigned infoPAddr, unit;
+      halDiskInfo_t *halDiskInfo;
 
-      unit   = plex86GuestCPU->genReg[GenRegEBX];
-      if (unit <= 1) {
-        unsigned size = (2048 * 1024 / 512);
-        exists = 1;
-        cylinders = (size & ~0x3f) >> 6;
-        heads = 4;
-        spt = 16;
+      infoPAddr   = plex86GuestCPU->genReg[GenRegEBX];
+      if ( infoPAddr >= (plex86MemSize - sizeof(halDiskInfo_t)) ) {
+        fprintf(stderr, "HalCallDiskGetInfo: infoPAddr(0x%x) past "
+                        "guest physical memory limit.\n", infoPAddr);
+        goto error;
         }
-      else {
-        exists = 0;
-        cylinders = 0;
-        heads = 0;
-        spt = 0;
+      halDiskInfo = (halDiskInfo_t *) &plex86MemPtr[infoPAddr];
+      for (unit=0; unit<HalDiskMaxDisks; unit++) {
+        if (unit <= 1) {
+          unsigned sectors = (2048 * 1024 / 512);
+          halDiskInfo[unit].exists = 1;
+          halDiskInfo[unit].geom.cylinders = (sectors & ~0x3f) >> 6;
+          halDiskInfo[unit].geom.heads = 4;
+          halDiskInfo[unit].geom.spt = 16;
+          halDiskInfo[unit].geom.start = 4;
+          halDiskInfo[unit].geom.numSectors = sectors;
+halDiskMem[unit] = malloc(sectors << 9);
+          }
+        else {
+          memset(&halDiskInfo[unit], 0, sizeof(halDiskInfo_t));
+halDiskMem[unit] = 0;
+          }
         }
-      plex86GuestCPU->genReg[GenRegEAX] = exists;
-      plex86GuestCPU->genReg[GenRegEBX] = cylinders;
-      plex86GuestCPU->genReg[GenRegECX] = heads;
-      plex86GuestCPU->genReg[GenRegEDX] = spt;
+      return;
+      }
+
+    case HalCallDiskWrite:
+      {
+      unsigned bufferPAddr = plex86GuestCPU->genReg[GenRegEBX];
+      unsigned sector      = plex86GuestCPU->genReg[GenRegECX];
+      unsigned unit        = plex86GuestCPU->genReg[GenRegEDX];
+      Bit8u *rwArea;
+
+      if ( bufferPAddr >= (plex86MemSize - 512) ) {
+        fprintf(stderr, "HalCallDiskWrite: bufferPAddr(0x%x) past "
+                        "guest physical memory limit.\n", bufferPAddr);
+        goto error;
+        }
+      if ( unit >= HalDiskMaxDisks ) {
+        fprintf(stderr, "HalCallDiskWrite: unit(%u) OOB.\n", unit);
+        goto error;
+        }
+// Fixme: other checks here.
+      rwArea = (Bit8u *) &plex86MemPtr[bufferPAddr];
+      memcpy(&halDiskMem[sector<<9], rwArea, 512);
+
+      // Result goes in EAX
+      plex86GuestCPU->genReg[GenRegEAX] = 1; // OK.
+      return;
+      }
+
+    case HalCallDiskRead:
+      {
+      unsigned bufferPAddr = plex86GuestCPU->genReg[GenRegEBX];
+      unsigned sector      = plex86GuestCPU->genReg[GenRegECX];
+      unsigned unit        = plex86GuestCPU->genReg[GenRegEDX];
+      Bit8u *rwArea;
+
+      if ( bufferPAddr >= (plex86MemSize - 512) ) {
+        fprintf(stderr, "HalCallDiskWrite: bufferPAddr(0x%x) past "
+                        "guest physical memory limit.\n", bufferPAddr);
+        goto error;
+        }
+      if ( unit >= HalDiskMaxDisks ) {
+        fprintf(stderr, "HalCallDiskWrite: unit(%u) OOB.\n", unit);
+        goto error;
+        }
+// Fixme: other checks here.
+      rwArea = (Bit8u *) &plex86MemPtr[bufferPAddr];
+      memcpy(rwArea, &halDiskMem[sector<<9], 512);
+
+      // Result goes in EAX
+      plex86GuestCPU->genReg[GenRegEAX] = 1; // OK.
+      return;
+      }
+
+    case HalCallDiskCleanup:
+      {
+      unsigned unit;
+
+      for (unit=0; unit<HalDiskMaxDisks; unit++) {
+        if ( halDiskMem[unit] )
+          free( halDiskMem[unit] );
+        }
       return;
       }
 
