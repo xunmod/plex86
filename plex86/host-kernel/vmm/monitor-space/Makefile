@@ -3,7 +3,7 @@
 #  plex86: run multiple x86 operating systems concurrently
 #  Copyright (C) 1999-2003 Kevin P. Lawton
 
-.PHONY: clean dist-clean
+.PHONY: clean dist-clean top
 
 include ../../../Rules.make
 
@@ -22,3 +22,6 @@ clean:
 	@/bin/rm -f *.o *.s
 
 dist-clean: clean
+
+top:
+	$(MAKE) -C ../../..

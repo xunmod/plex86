@@ -59,11 +59,11 @@ typedef struct {
 
 static unsigned  emulateSysInstr(vm_t *);
 static void      emulateUserInstr(vm_t *);
-//static unsigned  setCRx(unsigned crx, Bit32u val32);
+//static unsigned  setCRx(vm_t *, unsigned crx, Bit32u val32);
 //static unsigned  setDRx(unsigned drx, Bit32u val32);
 static phyAddr_t translateLinToPhy(vm_t *, Bit32u lAddr);
-//static unsigned  decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr);
-//static unsigned  loadGuestSegment(unsigned sreg, unsigned selector);
+static unsigned  decodeModRM(vm_t *, Bit8u *opcodePtr, modRM_t *modRMPtr);
+static unsigned  loadGuestSegment(vm_t *, unsigned sreg, selector_t selector);
 static Bit32u    getGuestDWord(vm_t *, Bit32u lAddr);
 static Bit16u    getGuestWord(vm_t *, Bit32u lAddr);
 static void      writeGuestDWord(vm_t *vm, Bit32u lAddr, Bit32u val);
@@ -108,6 +108,20 @@ static const unsigned dataSReg[4] = { SRegES, SRegDS, SRegFS, SRegGS };
 //static descriptor_t nullDesc = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static const phyAddr_t LinAddrNotAvailable = -1;
 
+#warning "move guestStackGenRegOffsets and add some sanity checks"
+static const int guestStackGenRegOffsets[8] = {
+  44, /* EAX */
+  40, /* ECX */
+  36, /* EDX */
+  32, /* EBX */
+  68, /* ESP (note ESP is pushed by the int/exception, not PUSHA) */
+  24, /* EBP */
+  20, /* ESI */
+  16  /* EDI */
+  };
+#define GenReg(vm, regno) \
+  * (Bit32u*) \
+  (((Bit8u*) vm->guest.addr.guestStackContext)+guestStackGenRegOffsets[regno])
 
 
   void
@@ -118,7 +132,7 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
     case ExceptionUD:
     case ExceptionGP:
       if ( CPL==0 ) {
-#if 0
+#if 1
 // This fault actually should assert RF.
         if ( emulateSysInstr(vm) ) {
           // Could speculatively execute until a non protection-level
@@ -126,7 +140,7 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
           // monitor faults.
           return;
           }
-        monpanic(vm, "#UD/#GP (CPL==0).\n");
+        toHostGuestFault(vm, fault, errorCode);
 #else
         // For now, defer back to the user space implementation until
         // the monitor space code is filled out.
@@ -229,40 +243,57 @@ translateLinToPhy(vm_t *vm, Bit32u lAddr)
   unsigned
 emulateSysInstr(vm_t *vm)
 {
-  phyAddr_t pAddr;
+  phyAddr_t pAddr0, pAddr1;
   unsigned b0, iLen=0;
   Bit8u    opcode[16];
   Bit32u  *opcodeDWords;
-  //modRM_t modRM;
+  modRM_t modRM;
   unsigned  pOff;
-  //unsigned opsize = 1; // 32-bit opsize by default.
+  Bit32u page0Len, page1Len;
+  unsigned opsize = 1; // 32-bit opsize by default.
   guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
   guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
 
   if (guestCpu->cr0.fields.pg) {
-    Bit32u    lAddr;
+    Bit32u lAddr0;
+    Bit8u *phyPagePtr;
 
-    lAddr = EIP; // Forget segmentation base for Linux.
-    pAddr = translateLinToPhy(vm, lAddr);
-    if (pAddr == LinAddrNotAvailable) {
+    lAddr0 = EIP; // Forget segmentation base for Linux.
+    pAddr0 = translateLinToPhy(vm, lAddr0);
+    if (pAddr0 == LinAddrNotAvailable) {
       monpanic(vm, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
-              lAddr);
+              lAddr0);
       }
-    if ( pAddr >= (vm->pages.guest_n_bytes-16) ) {
-      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
-              "beyond memory.\n", pAddr);
-      }
-    pOff = pAddr & 0xfff;
+    pOff = pAddr0 & 0xfff;
     if ( pOff <= 0xff0 ) {
-      Bit8u *phyPagePtr;
+      page0Len = 16;
+      page1Len = 0;
+      pAddr1   = pAddr0; // Keep compiler quiet.
+      }
+    else {
+      page0Len = 0x1000 - pOff;
+      page1Len = 16 - page0Len;
+      pAddr1    = translateLinToPhy(vm, lAddr0 + page0Len);
+      if (pAddr1 == LinAddrNotAvailable) {
+        monpanic(vm, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
+                lAddr0 + page0Len);
+        }
+      }
 
+fetch16:
+
+    if ( pAddr0 >= (vm->pages.guest_n_bytes-16) ) {
+      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
+              "beyond memory.\n", pAddr0);
+      }
+    if ( page0Len == 16 ) {
       // Draw in 16 bytes from guest memory into a local array so we don't
       // have to worry about edge conditions when decoding.  All accesses are
       // within a single physical page.
       // Fixme: we could probably use the linear address (corrected for
       // Fixme: monitor CS.base) to access the page without creating a window.
       /* Open a window into guest physical memory. */
-      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
+      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr0>>12,
                                 vm->guest.addr.tmp_phy_page0);
       opcodeDWords = (Bit32u*) &opcode[0];
       opcodeDWords[0] = * (Bit32u*) &phyPagePtr[pOff+ 0];
@@ -271,58 +302,37 @@ emulateSysInstr(vm_t *vm)
       opcodeDWords[3] = * (Bit32u*) &phyPagePtr[pOff+12];
       }
     else {
-monpanic(vm, "emulateSysInstr: page boundary fetch unfinshed.\n");
-#if 0
-      phyAddr_t page1PAddr;
-      unsigned i, page0Count, page1Count;
+      unsigned i;
 
-      page0Count = 0x1000 - pageOffset;
-      page1Count = 16 - page0Count;
-      // Fetch remaining bytes from this page.
-      for (i=0; i<page0Count; i++) {
-        opcode[i] = plex86MemPtr[pAddr + i];
+      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr0>>12,
+                                vm->guest.addr.tmp_phy_page0);
+      // Fetch initial bytes from page0.
+      for (i=0; i<page0Len; i++) {
+        opcode[i] = * (Bit8u*) &phyPagePtr[pOff + i];
         }
-      // Translate physical address of following page.
-      page1PAddr = translateLinToPhy((lAddr | 0xfff) + 1);
-      if ( page1PAddr == LinAddrNotAvailable ) {
-        fprintf(stderr, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
-                (lAddr | 0xfff) + 1);
-        return 0; // Fail.
+
+      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr1>>12,
+                                vm->guest.addr.tmp_phy_page0);
+      // Fetch remaining bytes from page1.
+      for (i=0; i<page1Len; i++) {
+        opcode[page0Len + i] = * (Bit8u*) &phyPagePtr[i];
         }
-      // Fetch residual bytes from following page.
-      for (i=0; i<page1Count; i++) {
-        opcode[page0Count + i] = plex86MemPtr[page1PAddr + i];
-        }
-#endif
       }
     }
   else {
-    Bit8u *phyPagePtr;
-
-    pAddr = EIP; // Forget segmentation base for Linux.
-    if ( pAddr >= (vm->pages.guest_n_bytes-16) ) {
-      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
-              "beyond memory.\n", pAddr);
-      }
-    pOff = pAddr & 0xfff;
+    pAddr0 = EIP; // Forget segmentation base for Linux.
+    pOff = pAddr0 & 0xfff;
     if ( pOff <= 0xff0 ) {
-      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
-              "crosses page boundary.\n", pAddr);
+      page0Len = 16;
+      page1Len = 0;
+      pAddr1   = pAddr0; // Keep compiler quiet.
       }
-
-    // Draw in 16 bytes from guest memory into a local array so we don't
-    // have to worry about edge conditions when decoding.  All accesses are
-    // within a single physical page.
-    // Fixme: we could probably use the linear address (corrected for
-    // Fixme: monitor CS.base) to access the page without creating a window.
-    /* Open a window into guest physical memory. */
-    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
-                              vm->guest.addr.tmp_phy_page0);
-    opcodeDWords = (Bit32u*) &opcode[0];
-    opcodeDWords[0] = * (Bit32u*) &phyPagePtr[pOff+ 0];
-    opcodeDWords[1] = * (Bit32u*) &phyPagePtr[pOff+ 4];
-    opcodeDWords[2] = * (Bit32u*) &phyPagePtr[pOff+ 8];
-    opcodeDWords[3] = * (Bit32u*) &phyPagePtr[pOff+12];
+    else {
+      page0Len = 0x1000 - pOff;
+      page1Len = 16 - page0Len;
+      pAddr1    = pAddr0 + page0Len;
+      }
+    goto fetch16;
     }
 
 decodeOpcode:
@@ -330,7 +340,6 @@ decodeOpcode:
   b0 = opcode[iLen++];
   // fprintf(stderr, "instruction @ addr=0x%x is 0x%x\n", pAddr, b0);
   switch (b0) {
-#if 0
     case 0x0f: // 2-byte escape.
       {
       unsigned b1;
@@ -338,11 +347,13 @@ decodeOpcode:
       switch (b1) {
         case 0x00: // Group6
           {
-          iLen += decodeModRM(&opcode[iLen], &modRM);
-          fprintf(stderr, "emulateSysIntr: G6: nnn=%u\n", modRM.nnn);
+          iLen += decodeModRM(vm, &opcode[iLen], &modRM);
+          monprint(vm, "emulateSysIntr: G6: nnn=%u\n", modRM.nnn);
           switch (modRM.nnn) {
             case 2: // LLDT_Ew
               {
+return 0; // defer to user space implementation for now.
+#if 0
               selector_t selector;
 
               if (modRM.mod==3)
@@ -358,10 +369,13 @@ decodeOpcode:
               plex86GuestCPU->ldtr.sel.raw = 0; // Make it null anyways.
               plex86GuestCPU->ldtr.valid = 0;
               goto advanceInstruction;
+#endif
               }
 
             case 3: // LTR_Ew
               {
+return 0; // defer to user space implementation for now.
+#if 0
               selector_t    tssSelector;
               descriptor_t *tssDescriptorPtr;
               Bit32u tssLimit;
@@ -402,6 +416,7 @@ decodeOpcode:
               // Write descriptor back to memory to update busy bit.
               tssDescriptorPtr->type |= 2;
               goto advanceInstruction;
+#endif
               }
 
             default:
@@ -411,11 +426,13 @@ decodeOpcode:
 
         case 0x01: // Group7
           {
-          iLen += decodeModRM(&opcode[iLen], &modRM);
+          iLen += decodeModRM(vm, &opcode[iLen], &modRM);
 // fprintf(stderr, "emulateSysIntr: G7: nnn=%u\n", modRM.nnn);
           switch (modRM.nnn) {
             case 2: // LGDT_Ms
               {
+return 0; // defer to user space implementation for now.
+#if 0
               Bit32u   base32;
               Bit16u   limit16;
 
@@ -429,9 +446,12 @@ decodeOpcode:
               plex86GuestCPU->gdtr.limit = limit16;
 fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
               goto advanceInstruction;
+#endif
               }
             case 3: // LIDT_Ms
               {
+return 0; // defer to user space implementation for now.
+#if 0
               Bit32u   base32;
               Bit16u   limit16;
 
@@ -444,9 +464,12 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
               plex86GuestCPU->idtr.base  = base32;
               plex86GuestCPU->idtr.limit = limit16;
               goto advanceInstruction;
+#endif
               }
             case 7: // INVLPG
               {
+return 0; // defer to user space implementation for now.
+#if 0
               if (modRM.mod==3) { // Must be a memory reference.
                 fprintf(stderr, "INVLPG: mod=3.\n");
                 return 0;
@@ -454,6 +477,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
               // Fixme: must act on this when this code goes in the VMM.
               // For now, who cares since the page tables are rebuilt anyways.
               goto advanceInstruction;
+#endif
               }
 
             case 0: // SGDT_Ms
@@ -464,13 +488,20 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
             }
           return 0;
           }
+
         case 0x06: // CLTS
           {
-          plex86GuestCPU->cr0.fields.ts = 0;
+return 0; // defer to user space implementation for now.
+#if 0
+          guestCpu->cr0.fields.ts = 0;
           goto advanceInstruction;
+#endif
           }
+
         case 0x20: // MOV_RdCd
           {
+return 0; // defer to user space implementation for now.
+#if 0
           unsigned modrm, rm, nnn;
           Bit32u   val32;
 // Fix this fetch.
@@ -492,24 +523,31 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
             }
           plex86GuestCPU->genReg[rm] = val32;
           goto advanceInstruction;
+#endif
           }
 
         case 0x22: // MOV_CdRd
           {
+return 0; // defer to user space implementation for now.
+#if 0
           Bit32u   val32;
-          iLen += decodeModRM(&opcode[iLen], &modRM);
+          iLen += decodeModRM(vm, &opcode[iLen], &modRM);
           if ( modRM.mod!=3 ) {
-            fprintf(stderr, "MOV_CdRd: mod field not 11b.\n");
+            monpanic(vm, "MOV_CdRd: mod field not 11b.\n");
             return 0;
             }
-          val32 = plex86GuestCPU->genReg[modRM.rm];
-          if ( setCRx(modRM.nnn, val32) )
+          val32 = GenReg(vm, modRM.rm);
+          if ( setCRx(vm, modRM.nnn, val32) )
             goto advanceInstruction;
           return 0;
+#endif
           }
+
 
         case 0x23: // MOV_DdRd
           {
+return 0; // defer to user space implementation for now.
+#if 0
           Bit32u   val32;
           iLen += decodeModRM(&opcode[iLen], &modRM);
           if ( modRM.mod!=3 ) {
@@ -520,45 +558,52 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
           if ( setDRx(modRM.nnn, val32) )
             goto advanceInstruction;
           return 0;
+#endif
           }
 
         case 0x30: // WRMSR
           {
+return 0; // defer to user space implementation for now.
+#if 0
           if ( doWRMSR() )
             goto advanceInstruction;
           return 0;
+#endif
           }
 
         case 0x31: // RDTSC
           {
+return 0; // defer to user space implementation for now.
+#if 0
           fprintf(stderr, "RDTSC.\n");
           plex86GuestCPU->genReg[GenRegEAX] = (Bit32u) tsc;
           plex86GuestCPU->genReg[GenRegEDX] = tsc>>32;
           tsc += 10; // Fixme: hack for now.
           goto advanceInstruction;
+#endif
           }
 
         case 0xb2: // LSS_GvMp
           {
           Bit32u   reg32;
-          unsigned selector;
+          selector_t selector;
 
-          iLen += decodeModRM(&opcode[iLen], &modRM);
+          iLen += decodeModRM(vm, &opcode[iLen], &modRM);
           if (modRM.mod==3) { // Must be a memory reference.
-            fprintf(stderr, "LSS_GvMp: mod=3.\n");
+            monpanic(vm, "LSS_GvMp: mod=3.\n");
             return 0;
             }
-          reg32    = getGuestDWord(modRM.addr);
-          selector = getGuestWord(modRM.addr+4);
-          if ( loadGuestSegment(SRegSS, selector) ) {
-            plex86GuestCPU->genReg[modRM.nnn] = reg32;
+          reg32        = getGuestDWord(vm, modRM.addr);
+          selector.raw = getGuestWord(vm, modRM.addr+4);
+          if ( loadGuestSegment(vm, SRegSS, selector) ) {
+            GenReg(vm, modRM.nnn) = reg32;
             goto advanceInstruction;
             }
           return 0;
           }
 
         default:
-          fprintf(stderr, "emulateSysInstr: default b1=0x%x\n", b1);
+          monpanic(vm, "emulateSysInstr: default b1=0x%x\n", b1);
           break;
         }
       break;
@@ -566,6 +611,8 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
 
     case 0x1f: // POP DS
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned selector;
 
       if ( opsize == 0 ) {
@@ -578,6 +625,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         goto advanceInstruction;
         }
       return 0;
+#endif
       }
 
     case 0x66: // Opsize:
@@ -591,6 +639,8 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
 
     case 0x8e: // MOV_SwEw
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned modrm, rm, sreg, selector;
 
 // Fix this fetch.
@@ -611,8 +661,8 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         return 0; // Fail.
         }
       break;
-      }
 #endif
+      }
 
     case 0x9b: // FWAIT
       {
@@ -621,9 +671,10 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       return 0;
       }
 
-#if 0
     case 0xcd: // int Ib
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned Ib;
 
       Ib = opcode[iLen++];
@@ -637,14 +688,17 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         doGuestInterrupt(vm, Ib, IntFlagSoftInt, 0);
         return 1; // OK
         }
+#endif
       }
 
     case 0xcf: // IRET
       {
+return 0; // defer to user space implementation for now.
+#if 0
       doIRET();
       return 1; // OK
-      }
 #endif
+      }
 
     case 0xdb: // ESC3 (floating point)
       {
@@ -676,9 +730,10 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       return 0;
       }
 
-#if 0
     case 0xe4: // IN_ALIb
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned port8;
       Bit8u    al;
 
@@ -687,19 +742,25 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       plex86GuestCPU->genReg[GenRegEAX] &= ~0xff;
       plex86GuestCPU->genReg[GenRegEAX] |= al;
       goto advanceInstruction;
+#endif
       }
 
     case 0xe6: // OUT_IbAL
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned port8;
 
       port8 = opcode[iLen++];
       outp(1, port8, plex86GuestCPU->genReg[GenRegEAX] & 0xff);
       goto advanceInstruction;
+#endif
       }
 
     case 0xea: // JMP_Ap (IdIw)
       {
+return 0; // defer to user space implementation for now.
+#if 0
       Bit32u offset;
       unsigned cs;
       offset = * (Bit32u*) &opcode[iLen];
@@ -710,10 +771,13 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         return 1; // OK.
         }
       return 0;
+#endif
       }
 
     case 0xec: // IN_ALDX
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned dx, al;
 
       dx = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
@@ -721,20 +785,26 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       plex86GuestCPU->genReg[GenRegEAX] &= ~0xff;
       plex86GuestCPU->genReg[GenRegEAX] |= al;
       goto advanceInstruction;
+#endif
       }
 
     case 0xee: // OUT_DXAL
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned dx, al;
 
       dx = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
       al = plex86GuestCPU->genReg[GenRegEAX] & 0xff;
       outp(1, dx, al);
       goto advanceInstruction;
+#endif
       }
 
     case 0xef: // OUT_DXeAX
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned dx;
       Bit32u  eax;
 
@@ -748,6 +818,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         outp(4, dx, eax);
         }
       goto advanceInstruction;
+#endif
       }
 
     case 0xf0: // LOCK (used to make IRET fault).
@@ -759,6 +830,8 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
 
     case 0xf4: // HLT
       {
+return 0; // defer to user space implementation for now.
+#if 0
       if ( !(plex86GuestCPU->eflags & FlgMaskIF) ) {
         fprintf(stderr, "HLT with IF==0.\n");
         return 0;
@@ -772,10 +845,13 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         pitExpireClocks( 1 );
         }
       goto advanceInstruction;
+#endif
       }
 
     case 0xfb: // STI (PVI triggers this when VIF is asserted.
       {
+return 0; // defer to user space implementation for now.
+#if 0
       unsigned vector;
 
       plex86GuestCPU->eip += iLen; // Commit instruction length.
@@ -787,8 +863,8 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       vector = picIAC(); // Get interrupt vector from PIC.
       doGuestInterrupt(vm, vector, 0, 0);
       return 1;
-      }
 #endif
+      }
 
     default:
       monpanic(vm, "emulateSysInstr: default b0=0x%x\n", b0);
@@ -983,9 +1059,8 @@ setDRx(unsigned drx, Bit32u val32)
 }
 #endif
 
-#if 0
   unsigned
-decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr)
+decodeModRM(vm_t *vm, Bit8u *opcodePtr, modRM_t *modRMPtr)
 {
   unsigned modrm = opcodePtr[0];
   unsigned len = 1; // Length of entire modrm sequence
@@ -1007,16 +1082,14 @@ decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr)
         len += 4;
         return(len);
         }
-      modRMPtr->addr = plex86GuestCPU->genReg[modRMPtr->rm];
+      modRMPtr->addr = GenReg(vm, modRMPtr->rm);
       return(len);
       }
     else if (modRMPtr->mod == 1) {
-      fprintf(stderr, "decodeModRM: no sib, mod=1.\n");
-      plex86TearDown(); exit(1);
+      monpanic(vm, "decodeModRM: no sib, mod=1.\n");
       }
     else { // (modRMPtr->mod == 2)
-      fprintf(stderr, "decodeModRM: no sib, mod=2.\n");
-      plex86TearDown(); exit(1);
+      monpanic(vm, "decodeModRM: no sib, mod=2.\n");
       }
     }
   else {
@@ -1024,98 +1097,82 @@ decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr)
     unsigned sib, scaledIndex;
     sib = opcodePtr[1];
     len++;
-    fprintf(stderr, "decodeModRM: sib byte follows.\n");
+    monprint(vm, "decodeModRM: sib byte follows.\n");
     modRMPtr->base  = (sib & 7);
     modRMPtr->index = (sib >> 3) & 7;
     modRMPtr->scale = (sib >> 6);
     if ( modRMPtr->mod == 0 ) {
       if ( modRMPtr->base == 5 ) {
         // get 32 bit displ + base?
-        fprintf(stderr, "decodeModRM: sib: mod=%u, base=%u.\n",
+        monpanic(vm, "decodeModRM: sib: mod=%u, base=%u.\n",
                 modRMPtr->mod, modRMPtr->base);
-        plex86TearDown(); exit(1);
         }
-      fprintf(stderr, "decodeModRM: sib: mod=%u, base=%u.\n",
+      monprint(vm, "decodeModRM: sib: mod=%u, base=%u.\n",
               modRMPtr->mod, modRMPtr->base);
       if ( modRMPtr->index != 4 )
-        scaledIndex = plex86GuestCPU->genReg[modRMPtr->index] << modRMPtr->scale;
+        scaledIndex = GenReg(vm, modRMPtr->index) << modRMPtr->scale;
       else
         scaledIndex = 0;
-      modRMPtr->addr = plex86GuestCPU->genReg[modRMPtr->base] + scaledIndex;
+      modRMPtr->addr = GenReg(vm, modRMPtr->base) + scaledIndex;
       return(len);
       }
     else if ( modRMPtr->mod == 1 ) {
       // get 8 bit displ
-      fprintf(stderr, "decodeModRM: sib: mod=%u, base=%u.\n",
+      monpanic(vm, "decodeModRM: sib: mod=%u, base=%u.\n",
               modRMPtr->mod, modRMPtr->base);
-      plex86TearDown(); exit(1);
       }
     else { // ( modRMPtr->mod == 2 )
       // get 32 bit displ
-      fprintf(stderr, "decodeModRM: sib: mod=%u, base=%u.\n",
+      monpanic(vm, "decodeModRM: sib: mod=%u, base=%u.\n",
               modRMPtr->mod, modRMPtr->base);
-      plex86TearDown(); exit(1);
       }
-    plex86TearDown(); exit(1);
     }
 
+  monpanic(vm, "decodeModRM: ???\n");
   return(0);
 }
-#endif
 
-#if 0
   unsigned
-loadGuestSegment(unsigned sreg, unsigned selector)
+loadGuestSegment(vm_t *vm, unsigned sreg, selector_t selector)
 {
-// Fixme: needs some data/code descriptor fields checks,
-// because we are passing the shadow cache assuming it is valid.
+  descriptor_t desc, *descPtr;
+  guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
 
-  unsigned gdtIndex, rpl;
-  descriptor_t * gdtEntryPtr;
-  phyAddr_t gdtOffset, descriptorPAddr;
+  descPtr = fetchGuestDescBySel(vm, selector, &desc);
+  if ( descPtr==0 ) {
+    monpanic(vm, "loadGuestSegment: fetch failed.\n");
+    }
 
-  if (selector & 4) {
-    fprintf(stderr, "loadGuestSegment: selector.ti=1.\n");
-    return 0; // Fail.
+  if (descPtr->dpl != selector.fields.rpl) {
+    monpanic(vm, "loadGuestSegment: descriptor.dpl != selector.rpl.\n");
     }
-  rpl = (selector & 3);
-  gdtIndex  = (selector>>3);
 
-// Fixme: Linux kernel/user seg?
-// Fixme: or at least check for gdtIndex==0 (NULL selector)
+#warning "Fixme: loadGuestSegment: need checks for .type, .p, .base, .limit etc."
 
-  gdtOffset = (selector&~7);
-// phy mem boundary check.  Following check not needed for Linux since
-// we will test for a Linux kernel seg.
-  if (gdtOffset >= plex86GuestCPU->gdtr.limit) {
-    fprintf(stderr, "loadGuestSegment: selector=0x%x OOB.\n",
-            selector);
-    return 0; // Fail.
+  switch ( sreg ) {
+    case SRegES:
+      guestStackContext->es = selector.raw | 3; // Always push down to ring3.
+      break;
+    case SRegCS:
+      monpanic(vm, "loadGuestSegment: sreg = CS.\n", sreg);
+    case SRegSS:
+      guestStackContext->ss = selector.raw | 3; // Always push down to ring3.
+      break;
+    case SRegDS:
+      guestStackContext->ds = selector.raw | 3; // Always push down to ring3.
+      break;
+    case SRegFS:
+      guestStackContext->fs = selector.raw | 3; // Always push down to ring3.
+      break;
+    case SRegGS:
+      guestStackContext->gs = selector.raw | 3; // Always push down to ring3.
+      break;
+    default:
+      monpanic(vm, "loadGuestSegment: sreg = %u.\n", sreg);
     }
-  descriptorPAddr = translateLinToPhy(plex86GuestCPU->gdtr.base + gdtOffset);
-  if (descriptorPAddr == LinAddrNotAvailable) {
-    fprintf(stderr, "loadGuestSegment: could not translate descriptor addr.\n");
-    return 0; // Fail.
-    }
-  if ( descriptorPAddr & 7 ) {
-    fprintf(stderr, "loadGuestSegment: descriptor addr not 8-byte aligned.\n");
-    return 0; // Fail.
-    }
-  if (descriptorPAddr >= (plex86MemSize-7) ) {
-    fprintf(stderr, "loadGuestSegment: descriptor addr OOB.\n");
-    return 0; // Fail.
-    }
-  gdtEntryPtr = (descriptor_t *) &plex86MemPtr[descriptorPAddr];
-  if (gdtEntryPtr->dpl != rpl) {
-    fprintf(stderr, "loadGuestSegment: descriptor.dpl != selector.rpl.\n");
-    return 0; // Fail.
-    }
-  plex86GuestCPU->sreg[sreg].sel.raw = selector;
-  plex86GuestCPU->sreg[sreg].des = *gdtEntryPtr;
-  plex86GuestCPU->sreg[sreg].valid = 1;
+  guestSelectorUpdated(vm, sreg, selector);
   return(1); // OK.
 }
-#endif
 
   Bit32u
 getGuestDWord(vm_t *vm, Bit32u lAddr)
@@ -1733,6 +1790,9 @@ doWRMSR(void)
 }
 #endif
 
+// Fixme: this is fetching a descriptor again.
+#warning "guestSelectorUpdated should take a descriptor parameter."
+
   void
 guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t sel)
 {
@@ -1742,7 +1802,7 @@ guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t sel)
    * initialize the GDT slot with a virtualized descriptor.
    */
 
-  /* Only care if non-CS selector is not a NULL selector.  Data selectors
+  /* Only check if non-CS selector is not a NULL selector.  Data selectors
    * can be loaded with a NULL selector.
    */
   if ( (segno==SRegCS) || (sel.raw & 0xfffc) ) {

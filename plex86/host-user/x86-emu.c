@@ -496,25 +496,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
           goto advanceInstruction;
           }
 
-        case 0xb2: // LSS_GvMp
-          {
-          Bit32u   reg32;
-          unsigned selector;
-
-          iLen += decodeModRM(&opcode[iLen], &modRM);
-          if (modRM.mod==3) { // Must be a memory reference.
-            fprintf(stderr, "LSS_GvMp: mod=3.\n");
-            return 0;
-            }
-          reg32    = getGuestDWord(modRM.addr);
-          selector = getGuestWord(modRM.addr+4);
-          if ( loadGuestSegment(SRegSS, selector) ) {
-            plex86GuestCPU->genReg[modRM.nnn] = reg32;
-            goto advanceInstruction;
-            }
-          return 0;
-          }
-
         default:
           fprintf(stderr, "emulateSysInstr: default b1=0x%x\n", b1);
           break;
@@ -571,13 +552,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       break;
       }
 
-    case 0x9b: // FWAIT
-      {
-      if (iLen == 1) // Prevent endless string of prefixes doing overrun.
-        goto decodeOpcode;
-      return 0;
-      }
-
     case 0xcd: // int Ib
       {
       unsigned Ib;
@@ -599,36 +573,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       {
       doIRET();
       return 1; // OK
-      }
-
-    case 0xdb: // ESC3 (floating point)
-      {
-      unsigned modrm;
-      modrm = opcode[iLen++];
-      if (modrm == 0xe3) {
-        // FNINIT (Fixme: ignored)
-        goto advanceInstruction;
-        }
-      if (modrm == 0xe4) {
-        // FSETPM (essentially a fnop)
-        goto advanceInstruction;
-        }
-      fprintf(stderr, "ESC3: next=0x%x unsupported.\n", modrm);
-      return 0;
-      }
-
-    case 0xdf: // ESC7 (floating point)
-      {
-      unsigned modrm;
-      modrm = opcode[iLen++];
-      if (modrm == 0xe0) {
-        // F(N)STSW AX : (Fixme, faked out to think there is no FPU for now)
-        plex86GuestCPU->genReg[GenRegEAX] = 0x0000ffff;
-        // plex86GuestCPU->genReg[GenRegEAX] = 0; // FPU exists.
-        goto advanceInstruction;
-        }
-      fprintf(stderr, "ESC7: next=0x%x unsupported.\n", modrm);
-      return 0;
       }
 
     case 0xe4: // IN_ALIb
