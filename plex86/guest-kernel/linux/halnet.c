@@ -1,4 +1,8 @@
 /*
+ * $Id$
+ */
+
+/*
  * This driver was derived from the sample "snull" driver
  * from the book "Linux Device Drivers" by Alessandro Rubini and
  * Jonathan Corbet, published by O'Reilly & Associates.
