@@ -1,0 +1,53 @@
+Plex86 is NOT in a benchmarkable state, rather in a proof-of-concept state.
+Benchmarking plex86 at this point is rather moot, until the following
+restrictions/issues have been dealt with.  As the project transitions
+from the proof-of-concept to a more usable stage, these issues will
+be dealt with incrementally, at which time benchmarking plex86 will give
+us an indication where performance stands and is headed.  There are
+many optimizations in addition, which will be considered.  Plex86 has
+a very small codebase, so it is very amenable to tweaking.  However,
+an overarching goal of plex86 is to keep it simple, manageable and
+auditable.  That goal will always be weighed against performance
+enhancements, especially ones which complicate the code.
+
+I would like to point out, that the immediate techie instinct to
+benchmark everything on Earth is not necessary the right one.  The true
+value of a VM is that it lets people utilize their resources more
+efficiently.  For example, if you consolidate 5 marginal servers each
+consuming 10% of the server CPU onto one physical server using VMs,
+you only need a VM with a 50% efficiency to get that 5:1 consolidation factor
+without driving the single server past 100% duty-cycle.  More VM efficiency
+beyond that is of course beneficial, but the point is that you have already
+won big.  As you push the efficiency of the VM higher, the relative gains
+in the consolidation factor diminish, and the level of complexity,
+bugginess and code obfuscation increase drastically.
+
+With that noted, I do have some microbenchmarks which are VM-approved
+(you can get some really bogus results inside a VM if you don't know
+how to benchmark a VM) and which I will run inside a plex86 Linux VM
+when its time.  At that time, incremental results will be posted here
+along with reports from other users.
+
+
+o Networking uses user-space TUN/TAP for rapid prototyping.  A single packet
+    being sent will cause the following transition: guest OS --> VM hypervisor
+    --> host OS --> host application (TUN/TAP call) --> host OS -->
+    host application --> host OS --> VM hypervisor --> guest OS.
+    <br>Ultimately, the traversal will skip much of this process.
+o The guest Linux networking driver is currently synchronous for
+    rapid prototyping purposes.  Each time a packet is transmitted,
+    the VM stops executing until the long path described above occurs.
+    Only one packet at a time is handled.  Ultimately, drivers should use
+    asynchronous strategies, and buffering where applicable.
+o Plex86 "pins" guest physical pages, with respect to the host Linux.
+    Only the pages which are active are dynamically pinned, and only up
+    to a current watermark of 4Megabytes of memory.  This watermark is
+    temporary and will migrate to a command line option.
+o Guest page tables are "shadowed", meaning that as new guest pages are
+    encountered, page tables are built which have virtualized values.
+    Upon each context switch, these tables are dumped and start empty
+    again.  The initial page table walk on a physical machine translates
+    to an exception in the VM monitor, and subsequently executes natively.
+    No current strategies to pre-virtualize page table entries or store
+    tables between context switches is currently used.
+o Many other things which I will include here as I think of them.
