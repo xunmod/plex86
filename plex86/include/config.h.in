@@ -1,3 +1,7 @@
+/*
+ * $Id$
+ */
+
 /* our plex86 compile time configuration options will go here */
 
 #ifndef __CONFIG_H__
