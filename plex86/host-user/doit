@@ -38,6 +38,11 @@ nfs_root=
 dump_vga=
 #dump_vga=-dump-vga
 
+#disk_directives=
+disk0="-disk0 file=/tmp/hald0,sectors=4096,chs=64/4/16"
+disk1="-disk1 file=/tmp/hald4M,sectors=8192,chs=128/4/16"
+disk_directives="$disk0 $disk1"
+
 #######################################################################
 
 # The initial ramdisk image is loaded at the end of the VM physical
@@ -78,6 +83,7 @@ fi
   -initrd-image $ramdisk_location $initrd \
   -linux-commandline "$linux_cmdline" \
   -bootloader-image $setup32 \
-  $dump_vga
+  $dump_vga \
+  $disk_directives
 
 exit 0 # Succeed.

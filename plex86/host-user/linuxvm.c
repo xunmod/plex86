@@ -102,6 +102,8 @@ static unsigned char tunscriptPathname[NAME_MAX];
 
 static unsigned char kernelCommandLine[KernelCommandLineMax];
 
+static diskParams_t  diskParams;
+
 static unsigned      plex86State = 0;
 static int           plex86FD = -1;
 
@@ -121,6 +123,7 @@ main(int argc, char *argv[])
   int argi = 1; /* Start at 1st option, skip program name. */
   int nMegs;
   plex86IoctlRegisterMem_t ioctlMsg;
+  unsigned unit;
 
 #define CheckArgsForParameter(n) \
     if ( (argi+(n)) >= argc ) goto errorArgsUnderflow
@@ -150,6 +153,8 @@ main(int argc, char *argv[])
   blImagePathname[0] = 0;
   blCommandLine[0] = 0;
   memset( &faultCount, 0, sizeof(faultCount) );
+  for (unit=0; unit<HalDiskMaxDisks; unit++)
+    diskParams[unit][0] = 0;
 
   /* Process command line. */
   while (argi < argc) {
@@ -197,13 +202,30 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
       argi += 2;
       }
     else if ( !strcmp(argv[argi], "-dump-vga") ) {
-      argi += 1;
       vgaDump = 1;
+      argi += 1;
       }
     else if ( !strcmp(argv[argi], "-tun-script") ) {
       CheckArgsForParameter(1);
       strncpy(tunscriptPathname, argv[argi+1], NAME_MAX-1);
       tunscriptPathname[NAME_MAX-1] = 0; /* Make damn sure string ends. */
+      argi += 2;
+      }
+    else if ( !strncmp(argv[argi], "-disk", 5) ) {
+      unsigned char unitAscii;
+
+      unitAscii = argv[argi][5];
+      if ( !isdigit(unitAscii) ) {
+        goto errorUsage;
+        }
+      unit = unitAscii - '0';
+      if (unit >= HalDiskMaxDisks) {
+        goto errorUsage;
+        }
+      CheckArgsForParameter(1);
+      strncpy(diskParams[unit], argv[argi+1], sizeof(diskParams[unit])-1);
+      /* Make damn sure string ends. */
+      diskParams[unit][sizeof(diskParams[unit])-1] = 0;
       argi += 2;
       }
     else {
@@ -349,7 +371,7 @@ fprintf(stderr, "INITRD: loaded @ 0x%x, size = %u\n",
   initLinuxIOenvironment();
   initLinuxCPUMemenvironment();
 
-  if ( initHal( tunscriptPathname ) == 0 ) {
+  if ( initHal( tunscriptPathname, &diskParams ) == 0 ) {
     (void) plex86TearDown();
     return(1); // Error.
     }

@@ -13,11 +13,11 @@
 
 
   unsigned
-initHal(char *tunScript)
+initHal(char *tunScript, diskParams_t *diskParams)
 {
   if ( !halNetInit(tunScript) )
     return(0);
-  if ( !halDiskInit() )
+  if ( !halDiskInit(diskParams) )
     return(0);
   if ( !halConInit() )
     return(0);

@@ -441,7 +441,7 @@ vgaOutp(vm_t *vm, unsigned iolen, unsigned port, unsigned val)
       return;
 
     default:
-      monprint(vm, "vgaOutp(0x%x, 0x%x).\n", port, val);
+      //monprint(vm, "vgaOutp(0x%x, 0x%x).\n", port, val);
       return; // Fixme:
     }
 
