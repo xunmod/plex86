@@ -77,21 +77,23 @@ static unsigned  doWRMSR(vm_t *vm);
 
 static void guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t selector);
 
-static inline void loadCR4(Bit32u newCR4)
+static inline void loadMonCR4(Bit32u newCR4)
 {
   __asm__ volatile (
     "movl %0, %%cr4"
       : /* No outputs. */
       : "r" (newCR4)
+      : "memory" // Fixme: do we need this?
     );
 }
 
-static inline void loadCR0(Bit32u newCR0)
+static inline void loadMonCR0(Bit32u newCR0)
 {
   __asm__ volatile (
     "movl %0, %%cr0"
       : /* No outputs. */
       : "r" (newCR0)
+      : "memory" // Fixme: do we need this?
     );
 }
 
@@ -579,7 +581,9 @@ monprint(vm, "GDTR.limit = 0x%x.\n", limit16);
 
     case 0xcf: // IRET
       {
+extern void toHostBogus(vm_t *vm);
       doIRET(vm);
+toHostBogus(vm);
       return 1; // OK
       }
 
@@ -749,6 +753,7 @@ emulateUserInstr(vm_t *vm)
   // modRM_t  modRM;
   // unsigned opsize = 1; // 32-bit opsize by default.
 
+  // Fixme: We could optimize by fetching just a word of memory for Int_Ib.
   getObjectLAddr(vm, opcode, EIP, 16);
 
 // decodeOpcode:
@@ -785,6 +790,8 @@ setCRx(vm_t *vm, unsigned crx, Bit32u val32)
 
   //monprint(vm, "setCR%u: val=0x%x.\n", crx, val32);
 
+monInitShadowPaging(vm); // Fixme:
+
   switch ( crx ) {
     case 0:
       {
@@ -800,7 +807,7 @@ setCRx(vm_t *vm, unsigned crx, Bit32u val32)
       if ( newMonCR0 != nexus->mon_cr0 ) {
         nexus->mon_cr0 = newMonCR0;
         // Reload monitor CR0 due to delta.
-        loadCR0( newMonCR0 );
+        loadMonCR0( newMonCR0 );
         }
 
       // Fixme: have to notify the monitor of changes.
@@ -1307,13 +1314,12 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
   descriptor_t *csDescPtr, csDesc;
   Bit32u esp;
   Bit32u oldEFlags;
-  guest_cpu_t *guestCpu;
+  guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
   guestStackContext_t *guestStackContext;
   unsigned fromCPL;
   nexus_t *nexus;
   Bit32u newCR4;
 
-  guestCpu          = vm->guest.addr.guest_cpu;
   guestStackContext = vm->guest.addr.guestStackContext;
   nexus             = vm->guest.addr.nexus;
   fromCPL = CPL;
@@ -1482,7 +1488,7 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
   // it is not reloaded in the IRET back to the guest.
   if ( nexus->mon_cr4 != newCR4 ) {
     nexus->mon_cr4 = newCR4;
-    loadCR4(newCR4);
+    loadMonCR4(newCR4);
     //monprint(vm, "CR4 reloaded to 0x%x.\n", newCR4);
     }
   //monprint(vm, "CPL %u -> %u, eflags=0x%x\n", fromCPL, CPL, oldEFlags);
@@ -1545,6 +1551,7 @@ doIRET(vm_t *vm)
     // get SS:ESP from the kernel stack, and validate those values.
     Bit32u     toESP;
     selector_t toSS;
+    selector_t ds, es, fs, gs;
 //monprint(vm, "doIRET: rpl=%u.\n", toCS.fields.rpl);
 
     toESP    = getGuestDWord(vm, esp+12);
@@ -1574,14 +1581,39 @@ doIRET(vm_t *vm)
     // For any data segment which has RPL not equal to the user level (3),
     // nullify the segment by setting the selector to the NULL selector.
     // Fixme: if the order of selector pushes changes, reorder this code.
-    if ( (guestStackContext->gs & 3) != 3 )
-      guestStackContext->gs = 0;
-    if ( (guestStackContext->fs & 3) != 3 )
-      guestStackContext->fs = 0;
-    if ( (guestStackContext->ds & 3) != 3 )
-      guestStackContext->ds = 0;
-    if ( (guestStackContext->es & 3) != 3 )
-      guestStackContext->es = 0;
+    // Fixme: should put .ti check here in case we ever support it,
+    // Fixme: and forget to deal with it here.
+    gs.raw = guestStackContext->gs;
+    if ( gs.raw & 0xfffc ) {
+      if ( gs.fields.index != LinuxUserDsSlot ) {
+        monpanic(vm, "doIRET: gdtSlot != LinuxUserDsSlot.\n");
+        guestStackContext->gs = 0;
+        }
+      }
+
+    fs.raw = guestStackContext->fs;
+    if ( fs.raw & 0xfffc ) {
+      if ( fs.fields.index != LinuxUserDsSlot ) {
+        monpanic(vm, "doIRET: gdtSlot != LinuxUserDsSlot.\n");
+        guestStackContext->fs = 0;
+        }
+      }
+
+    ds.raw = guestStackContext->ds;
+    if ( ds.raw & 0xfffc ) {
+      if ( ds.fields.index != LinuxUserDsSlot ) {
+        monpanic(vm, "doIRET: gdtSlot != LinuxUserDsSlot.\n");
+        guestStackContext->ds = 0;
+        }
+      }
+
+    es.raw = guestStackContext->es;
+    if ( es.raw & 0xfffc ) {
+      if ( es.fields.index != LinuxUserDsSlot ) {
+        monpanic(vm, "doIRET: gdtSlot != LinuxUserDsSlot.\n");
+        guestStackContext->es = 0;
+        }
+      }
     }
   else {
     // If IRET to same level, then ESP did not come off the kernel
@@ -1662,7 +1694,7 @@ if (changeMask != 0x254dd5) {
     if ( ! (nexus->mon_cr4 & (1<<1)) )
       monpanic(vm, "IRET: r0 -> r3; mon CR4.PVI=0?\n");
     nexus->mon_cr4 &= ~(1<<1); // Clear CR4.PVI
-    loadCR4(nexus->mon_cr4);   // Reload actual monitor CR4 value.
+    loadMonCR4(nexus->mon_cr4);   // Reload actual monitor CR4 value.
     }
   else {
     // IRET ring3 --> ring3.  Remain in non-PVI mode.

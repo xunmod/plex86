@@ -844,6 +844,7 @@ hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
 
   if ( (vm->mon_request == MonReqFlushPrintBuf) ||
        (vm->mon_request == MonReqHalCall) ||
+(vm->mon_request == MonReqBogus) ||  // Fixme:
        (vm->mon_request == MonReqRedirect) ) {
     /* If the last message sent to user space was a print buffer flush,
      * then the monitor is still executing, and the state is valid.
@@ -853,6 +854,10 @@ hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
     vm->mon_request = MonReqNone;
     goto executeVMLoop;
     }
+
+// Fixme: linuxvmmode should not reach here, except on the initial
+// Fixme: call - maybe make an explicit call to set the cpu state,
+// Fixme: or use some kind of flag in all calls.
 
   if ( vm->mon_request != MonReqNone ) {
     retval = Plex86NoExecute_VMState; /* Fail. */
@@ -1301,7 +1306,19 @@ guest_cpu->INTR = vm->system.INTR;
           return 0;
 
         case MonReqHalCall:
-          hostCopyGuestStateToUserSpace(vm);
+          //hostCopyGuestStateToUserSpace(vm);
+          // Fixme: Could use memcpy(); both are in order.  Pack both structs.
+          // HAL communications set values in the general registers to
+          // pass information.  We need to update at least the general
+          // registers in the CPU area window that user space can see.
+          guest_cpu->genReg[GenRegEDI] = guestStackContext->edi;
+          guest_cpu->genReg[GenRegESI] = guestStackContext->esi;
+          guest_cpu->genReg[GenRegEBP] = guestStackContext->ebp;
+          guest_cpu->genReg[GenRegESP] = guestStackContext->esp;
+          guest_cpu->genReg[GenRegEBX] = guestStackContext->ebx;
+          guest_cpu->genReg[GenRegEDX] = guestStackContext->edx;
+          guest_cpu->genReg[GenRegECX] = guestStackContext->ecx;
+          guest_cpu->genReg[GenRegEAX] = guestStackContext->eax;
           executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
 //vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
           executeMsg->instructionsExecuted = 0; /* Handle later. */
@@ -1311,6 +1328,17 @@ guest_cpu->INTR = vm->system.INTR;
           guest_cpu->INTR = vm->system.INTR;
           return 0;
 
+        case MonReqBogus:
+          executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
+//vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
+          executeMsg->instructionsExecuted = 0; /* Handle later. */
+          executeMsg->monitorState.state   = vm->vmState;
+          executeMsg->monitorState.request = vm->mon_request;
+          // Fixme: see above.
+          guest_cpu->INTR = vm->system.INTR;
+          return 0;
+
+#if 0
         case MonReqGuestFault:
           /* Encountered a guest fault. */
 //hostOSKernelPrint("eflags out 0 0x%x", guest_cpu->eflags);
@@ -1327,7 +1355,9 @@ guest_cpu->INTR = vm->system.INTR;
           executeMsg->monitorState.guestFaultError = vm->guestFaultError;
           vm->mon_request = MonReqNone;
           return 0;
+#endif
 
+#if 0
         case MonReqCyclesUpdate:
           // Fixme: Not sure if it makes sense to copy the state here.  If
           // not, we can skip it, but have to skip the preamble code above
@@ -1341,6 +1371,7 @@ guest_cpu->INTR = vm->system.INTR;
           executeMsg->monitorState.request = vm->mon_request;
           vm->mon_request = MonReqNone;
           return 0;
+#endif
 
         case MonReqPanic:
           if (vm->abort_code)
@@ -1382,6 +1413,7 @@ handlePanic:
   return(retval);
 }
 
+#if 0
   void
 hostCopyGuestStateToUserSpace(vm_t *vm)
 {
@@ -1463,6 +1495,7 @@ hostCopyGuestStateToUserSpace(vm_t *vm)
     }
   /* vm->veflags.raw = 0; */ /* Virtualized EFLAGS - implement later. */
 }
+#endif
 
 
   int

@@ -96,3 +96,14 @@ toHostHalCall(vm_t *vm)
 
   restoreIF(eflags);
 }
+
+  void
+toHostBogus(vm_t *vm)
+{
+  Bit32u eflags = saveEFlagsCLI();
+
+  vm->mon_request = MonReqBogus;
+  vm->guest.__mon2host();
+
+  restoreIF(eflags);
+}
