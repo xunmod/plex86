@@ -1,0 +1,210 @@
+quickie.txt
+===========
+
+You may follow either EASY or HARDCORE tracks of these instructions.
+All files are available on the main website @ http://plex86.sourceforge.net/
+Every time you see '/tmp/...' it refers to wherever you actually downloaded
+the files to.  Log into at least 2 shells, one as a user and one as root.
+
+Requirements: Linux host 2.4.20+, Linux guest 2.4+.
+
+1) You need a guest Linux kernel image:
+
+  EASY: Download one from the plex86 website.  Get a 2.4.20 image from
+    the downloads section of the main website.
+
+  HARDCORE:
+    Note: You should have all the required versions of tools which Linux
+    Note: kernel compilation requires.
+
+    o Get a 2.4.20 kernel source tarball.  Put it in a *separate* directory.
+    o Download the plex86 mods for Linux kernel 2.4.20 from the website.
+    o Download the plex86 config for Linux kernel 2.4.20 from the website.
+    o Patch the new kernel dir with these patches.
+    o Copy the config file to '.config' in the new kernel dir.
+    o Run 'make xconfig' or other config option.  Save and quit.
+    o Type 'make vmlinux'.
+    o Type 'objcopy -O binary vmlinux /tmp/vmlinux-2.4.20.img', to convert
+      from an ELF format into a straight binary image format.  (We're going
+      to load this image straight into guest memory without a bootloader)
+
+2) You need an initrd (initial ramdisk) image.  This is a temporary root
+   filesystem for the guest Linux to mount, since it boots in straight
+   32-bit protected mode and has no disk drivers builtin at all.
+
+  EASY: Download a sample initrd for 2.4.20 from the main website.
+
+  HARDCORE: It's a bit of work getting all the right files and dynamic
+    libraries together.  If you like making initrd images, you don't need
+    my help.  In fact, if you make some interesting ones, let me know.
+    Make sure that any driver you put on it, is compiled against a Linux
+    kernel which is patches with the plex86 mods!
+
+3) Configure plex86.
+
+  o Type './doconfigure' from the top-level directory of plex86.  It is
+    a friendly front-end to the configure script.
+  o It will ask you 1st for the path to your host Linux header files.
+    This is the same path you would use for building other Linux drivers.
+    Make sure it is for the version of the kernel you are running.
+  o Next it will ask you for the path to the guest Linux header files.
+
+    EASY: Type 'none' if you are not rolling your own guest drivers.  There
+      is currently only a network driver, and a pre-built one is on the
+      initrd image, so you don't need to build this.
+
+    HARDCORE: Enter the path to the directory of the guest Linux header files,
+      which is the directory of the source above that you patched with the
+      plex86 mods.  The same patched guest Linux source should generate both
+      the kernel image and the plex86 guest drivers.
+
+4) Compile plex86.
+
+  o Type 'make clean'.
+  o Type 'make'.
+
+5) Put the guest driver on the initrd image.
+
+  EASY: skip this, it is already on the pre-built initrd image.
+
+  HARDCORE:
+    root> mkdir /mnt/initrd  # If not in existence already
+    root> mount -t ext2 -o loop /tmp/initrd-2.4.20.img /mnt/initrd
+    root> cp /plex86-path/guest-kernel/linux/halnet /mnt/initrd/
+    root> umount /mnt/initrd
+
+    NOTE: Don't do the following.  It's only for reference in case you're
+      interested in creating initrd image.  Read the Linux kernel doc file
+      'Documentation/initrd.txt' for more info.  But to make a simple one:
+
+      root> gcc -static -Wall -O2 -o /tmp/linuxrc /plex86-path/misc/helloVWorld.c
+
+      root> dd if=/dev/zero of=/tmp/initrd.img bs=512k count=1
+        -or-
+      root> dd if=/dev/zero of=/tmp/initrd.img bs=4096k count=1
+        -or-
+      root> dd if=/dev/zero of=/tmp/initrd.img bs=6M count=1
+
+      root> mke2fs -F -m0 /tmp/initrd.img
+      root> mkdir /mnt/initrd  # If not in existence already
+      root> mount -t ext2 -o loop /tmp/initrd.img /mnt/initrd
+      root> mkdir /mnt/initrd/dev
+      root> mknod /mnt/initrd/dev/console c 5 1
+      root> cp /tmp/linuxrc /mnt/initrd/
+      root> chmod +x /mnt/initrd/linuxrc
+      root> umount /mnt/initrd
+
+6) Edit 'host-user/doit'.  You can pass parameters to the command line by hand,
+  but I made this one-liner script to demonstrate the parameters you need.
+  Change the pathname to the '-linux-image' to point to the guest linux kernel
+  image you downloaded or built.  Change the '-initrd-image' to point to
+  the initrd image you downloaded or built.  Note the rest of the parmeters.
+  '-megs' is the size of the guest memory to allocate.  Leave this at
+  32 for now.  '-command-line' sets the parmeters which are passed to the
+  guest Linux kernel.  These are documented in the Linux kernel doc file
+  'Documentation/kernel-parameters.txt'.  Make sure that the 'ramdisk_size'
+  is the size of the initrd image in K.  The 'bogomips' parameter I added
+  as part of my kernel mods.  Use the same value as you get on your host
+  machine ("dmesg | grep -i bogomips").
+
+7) You need to load the TUN/TAP device on your host Linux.
+
+  Note: I had not used TUN/TAP before and had to do the following.  The
+  Note: last one opens up TUN/TAP to invocation by *any* user and is *not*
+  Note: a generally good idea for security.  Did I mention pull the plug
+  Note: and revert back later?  Keep track of your system mods!  You could
+  Note: also run plex86 as root instead of giving users permission.
+  Note:
+  Note: You can also have kernel module autoloading load TUN/TAP instead
+  Note: of insmod'ing it by hand.  Regardez-vous 'Documentation/networking'
+  Note: in the Linux kernel source.
+
+    # Only did the 1st time.
+    root> mkdir /dev/net
+    root> mknod /dev/net/tun c 10 200
+    root> chmod ugo+rw /dev/net/tun
+
+  root> insmod tun
+  "Using /lib/modules/2.4.20-686/kernel/drivers/net/tun.o"
+
+8) Add /etc/hosts, /etc/ethers entries for the host/guest machines
+  for the new network provided by TUN/TAP.  The pre-built initrd image
+  expects to use *exactly* these numbers.  The ether address is
+  currently hardwired into the guest driver.  You could probably change
+  the IP address if you update both these files appropriately on the
+  initrd image (mount it and edit it as per above) and the host.
+
+  Note: Make sure you are not already using this network for something
+  Note: else.  And pull the plug on external networking while you're at it.
+  Note: Revert system files back to their original values after running the
+  Note: demo.
+
+  host's /etc/hosts:
+  ==================
+
+    192.168.10.1    host-vmnet
+    192.168.10.2    guest-vmnet
+
+  host's /etc/ethers:
+  ===================
+
+    0:53:4e:55:4c:30 guest-vmnet
+
+9) Let the guest Linux access your X desktop:
+
+  user> xhost +guest-vmnet
+
+  Note: Yet another reason to pull the plug on external networking.
+
+10) Load the plex86 host driver:
+
+  root> /plex86-path/host-kernel/linux/load_module.sh
+
+11) Run plex86:
+
+  user> cd host-user
+  user> . doit
+
+  Note: The TUN/TAP interface has a lifespan only between open() and close()
+  Note: events of the device.  Later, I will add the ability to execute a script
+  Note: file to configure the device appropriately upon open().  For now, you
+  Note: have to do things by hand.  The pre-built initrd image is expecting
+  Note: the following ethernet address.
+
+  Plex86 will ask you to configure TUN/TAP.  Open another shell, logged in
+  as root and do the following each time you run plex86:
+
+  root> /sbin/ifconfig tun0 hw ether 00:FF:84:8E:94:31 host-vmnet
+  root> arp -f /etc/ethers
+
+  Now you can type return in the original shell, and plex86 will continue.
+
+12) If all goes well, you should see an X application (xclipboard) pop
+  up on your host desktop.  First though, you can enjoy lots of text debug
+  spew to your window - no good rev#0 is without that.  Play with
+  the X app.  Use some imagination - pretend it was a more interesting
+  app.  You can change the linuxrc script on the initrd image by mounting
+  the initrd and modifying that file.  xlogo also works, and is even
+  less interesting.  xterm almost works.  I was playing with strace to
+  see what files it was using and where it is choking.  Not sure I got
+  all the system files right, like /var/run/utmp and others.  Ping works
+  and in fact the linuxrc script executes ping first.
+
+  When you are done, type 'Ctrl-C' in the window that you started plex86 in.
+  If you scroll back, you'll see that the VGA text framebuffer was spewed
+  out to your window.  You should be able to see the output of the linuxrc
+  script, including the ifconfig, ping, and other output.
+
+13) Report back your experience to the plex86 developers list.  Please join
+  if you have not already.  See http://plex86.sourceforge.net/ for more
+  details.
+
+14) Get more exciting X applications working on the initrd.  I'd like to
+  get xterm working.  The binary is on the pre-built initrd.
+
+15) Undo after experimentng.
+
+  user> xhost -guest-vmnet
+  root> /plex86-path/host-kernel/linux/unload_module.sh
+  root> chmod [orig-permissions] /dev/net/tun
+  root> # Revert /etc/hosts, /etc/ethers

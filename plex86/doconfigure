@@ -1,0 +1,110 @@
+#!/bin/bash
+
+version_path=include/linux/version.h
+asm_macro_path=include/asm-i386/eflags_if.h
+
+CC=gcc
+LDFLAGS=
+
+CFLAGS_2_4="-Wall -Wstrict-prototypes -Wno-trigraphs -O2 -fno-strict-aliasing -fno-common -fomit-frame-pointer -pipe -mpreferred-stack-boundary=2 -march=i586"
+
+CFLAGS_2_5="-Wall -Wstrict-prototypes -Wno-trigraphs -O2 -fno-strict-aliasing -fno-common -pipe -mpreferred-stack-boundary=2 -march=i586"
+
+#
+# Get path to host Linux header directory.
+#
+echo "#"
+echo "# Note: for header directories, enter parent of include/"
+echo "#"
+read -p "Enter host  Linux header directory: " hl_hdir
+if [ ! -d $hl_hdir -o ! -r $hl_hdir/$version_path ]; then
+  echo "Error: File '$hl_hdir' does not exist.  Is your source/header directory"
+  echo "Error: configured?  Please read the toplevel 'README'."
+  exit 1
+elif [ -r $hl_hdir/$asm_macro_path ]; then
+  echo "Warning: Linux host header directory is patched for plex86."
+  echo "Warning: Perhaps you are pointing me at the directory you intended"
+  echo "Warning: to use for the guest?  This will be common when the plex86"
+  echo "Warning: mods are integrated in the main Linux source tree."
+  read -p "Press Enter to continue: "
+fi
+hl_uts_release=`awk -F\" '/REL/ {print $$2}' $hl_hdir/$version_path`
+echo "Host  is version" $hl_uts_release
+
+#
+# Get path to guest Linux header directory.
+#
+echo " "
+echo "#"
+echo "# Note: you may enter the keyword 'none' below, to skip building guest"
+echo "# drivers.  This is the case if you intend to use a pre-compiled kernel"
+echo "# image and corresponding pre-compiled guest Linux drivers (likely on"
+echo "# a pre-built initrd image)."
+echo "#"
+read -p "Enter guest Linux header directory: " gl_hdir
+if test "$gl_hdir" = "none"; then
+  gl_uts_release=none
+elif [ ! -d $gl_hdir -o ! -r $gl_hdir/$version_path ]; then
+  echo "Error: File '$gl_hdir' does not exist.  Is your source/header directory"
+  echo "Error: configured?  Please read the toplevel 'README'."
+  exit 1
+elif [ ! -r $gl_hdir/$asm_macro_path ]; then
+  echo "Error: Linux guest header directory is not patched for plex86."
+  echo "Error: Please read the toplevel 'README'."
+  exit 1
+else
+  gl_uts_release=`awk -F\" '/REL/ {print $$2}' $gl_hdir/$version_path`
+  echo "Guest is version" $gl_uts_release
+fi
+
+
+case $hl_uts_release in
+  2.4.* )
+    export HOST_KERNEL_CFLAGS="${CFLAGS_2_4}"
+    export HOST_USER_CFLAGS="${CFLAGS_2_4}"
+    export HOST_VERSION="2.4"
+    ;;
+  2.5.* )
+    export HOST_KERNEL_CFLAGS="${CFLAGS_2_5}"
+    export HOST_USER_CFLAGS="${CFLAGS_2_5}"
+    export HOST_VERSION="2.5"
+    ;;
+  * )
+    echo "Error: Host Linux kernel must be 2.4+"
+    exit 1
+    ;;
+esac
+
+case $gl_uts_release in
+  none )
+    export GUEST_KERNEL_CFLAGS="none"
+    export GUEST_USER_CFLAGS="none"
+    export GUEST_VERSION="none"
+    ;;
+  2.4.* )
+    export GUEST_KERNEL_CFLAGS="${CFLAGS_2_4}"
+    export GUEST_USER_CFLAGS="${CFLAGS_2_4}"
+    export GUEST_VERSION="2.4"
+    ;;
+  2.5.* )
+    export GUEST_KERNEL_CFLAGS="${CFLAGS_2_5}"
+    export GUEST_USER_CFLAGS="${CFLAGS_2_5}"
+    export GUEST_VERSION="2.5"
+    ;;
+  * )
+    echo "Error: Guest Linux kernel must be 2.4+"
+    exit 1
+    ;;
+esac
+
+if test "$gl_hdir" = "none"; then
+  ./configure \
+    --with-host-linux-source=$hl_hdir
+else
+  ./configure \
+    --with-host-linux-source=$hl_hdir \
+    --with-guest-linux-source=$gl_hdir
+fi
+
+echo " "
+echo "If all went well, type 'make clean', then 'make'."

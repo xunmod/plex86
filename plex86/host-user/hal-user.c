@@ -1,0 +1,403 @@
+/////////////////////////////////////////////////////////////////////////
+//// $Id$
+///////////////////////////////////////////////////////////////////////////
+////
+////  Copyright (C) 2003  Kevin P. Lawton
+////
+////  This library is free software; you can redistribute it and/or
+////  modify it under the terms of the GNU Lesser General Public
+////  License as published by the Free Software Foundation; either
+////  version 2 of the License, or (at your option) any later version.
+////
+////  This library is distributed in the hope that it will be useful,
+////  but WITHOUT ANY WARRANTY; without even the implied warranty of
+////  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+////  Lesser General Public License for more details.
+////
+////  You should have received a copy of the GNU Lesser General Public
+////  License along with this library; if not, write to the Free Software
+////  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+
+#include <stdio.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <string.h>
+#include <signal.h>
+#include <ctype.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <linux/if.h>
+#include <linux/if_tun.h>
+
+#include "plex86.h"
+#include "linuxvm.h"
+#include "linux-setup.h"
+#include "io.h"
+#include "hal.h"
+#include "hal-user.h"
+
+
+#define HalNet0Irq 3
+
+
+static unsigned initTunTap(void);
+static void tuntapDev0SigIO(int sig);
+
+
+//static int bridge_term = 0;
+int fdTunTap = -1;
+static struct sigaction sa;
+
+volatile unsigned tunTapInService = 0;
+volatile unsigned tunTapEvent = 0;
+
+
+struct {
+  unsigned  registered;
+
+  // The guest must register a packet receive buffer in guest physical
+  // memory, where we can transfer packets to.
+  phyAddr_t            guestRxAreaPAddr;
+  unsigned             guestRxAreaLen;
+
+  // A conviences pointer directly into the guest physical memory.
+  halNetGuestRxArea_t *guestRxArea;
+  } halNetDev[HalNetMaxDevices];
+
+  unsigned
+initHal(void)
+{
+  memset( &halNetDev[0], 0, sizeof(halNetDev) );
+  return( initTunTap() );
+}
+
+  void
+halCall(void)
+{
+  unsigned callNo;
+
+  fprintf(stderr, "halCall: call=%u, device=%u, packetAddr=0x%x, len=%u.\n",
+          plex86GuestCPU->genReg[GenRegEAX],
+          plex86GuestCPU->genReg[GenRegEBX],
+          plex86GuestCPU->genReg[GenRegECX],
+          plex86GuestCPU->genReg[GenRegEDX]);
+
+  callNo = plex86GuestCPU->genReg[GenRegEAX];
+
+  switch ( callNo ) {
+
+    // The guest requests registereing of this network device.
+    case HalCallNetGuestRegDev:
+      {
+      unsigned deviceNo, rxAreaPAddr, rxAreaLen;
+
+      deviceNo    = plex86GuestCPU->genReg[GenRegEBX];
+      rxAreaPAddr = plex86GuestCPU->genReg[GenRegECX];
+      rxAreaLen   = plex86GuestCPU->genReg[GenRegEDX];
+      if ( deviceNo >= HalNetMaxDevices ) {
+        fprintf(stderr, "HalCallNetGuestRegDev: deviceNo=%u.\n", deviceNo);
+        goto error;
+        }
+      if ( halNetDev[deviceNo].registered ) {
+        fprintf(stderr, "HalCallNetGuestRegDev: deviceNo %u already "
+                        "registered.\n", deviceNo);
+        goto error;
+        }
+      if ( rxAreaLen < sizeof(halNetGuestRxArea_t) ) {
+        fprintf(stderr, "HalCallNetGuestRegDev: rxAreaLen(%u) too small.\n",
+                        rxAreaLen);
+        goto error;
+        }
+      if ( rxAreaPAddr >= (plex86MemSize - sizeof(halNetGuestRxArea_t)) ) {
+        fprintf(stderr, "HalCallNetGuestRegDev: rxAreaPAddr(0x%x) past "
+                        "guest physical memory limit.\n", rxAreaPAddr);
+        goto error;
+        }
+      halNetDev[deviceNo].registered = 1;
+      halNetDev[deviceNo].guestRxAreaPAddr = rxAreaPAddr;
+      halNetDev[deviceNo].guestRxAreaLen   = rxAreaLen;
+      halNetDev[deviceNo].guestRxArea =
+          (halNetGuestRxArea_t *) &plex86MemPtr[rxAreaPAddr];
+      plex86GuestCPU->genReg[GenRegEAX] = 1; // Success.
+      return;
+      }
+
+    // The guest is transmitting a packet.
+    case HalCallNetGuestTx:
+      {
+      unsigned deviceNo, packetPAddr, packetLen;
+      // Bit8u   *rxBuffer;
+      Bit8u   *txBuffer;
+      int ret;
+      // unsigned i;
+      // Bit8u   *macHdr, temp8;
+      // Bit32u  *ipAddr, temp32;
+
+      deviceNo    = plex86GuestCPU->genReg[GenRegEBX];
+      packetPAddr = plex86GuestCPU->genReg[GenRegECX];
+      packetLen   = plex86GuestCPU->genReg[GenRegEDX];
+      if ( deviceNo >= HalNetMaxDevices ) {
+        fprintf(stderr, "halCallNetGuestTx: deviceNo=%u.\n", deviceNo);
+        goto error;
+        }
+      if ( halNetDev[deviceNo].registered==0 ) {
+        fprintf(stderr, "halCallNetGuestTx: deviceNo %u no registered.\n",
+                deviceNo);
+        goto error;
+        }
+      if ( packetLen > MaxEthernetFrameSize ) {
+        fprintf(stderr, "halCallNetGuestTx: packetLen=%u.\n", packetLen);
+        goto error;
+        }
+      if ( packetPAddr >= (plex86MemSize - packetLen) ) {
+        fprintf(stderr, "HalCallNetGuestTx: packetPAddr(0x%x) past "
+                        "guest physical memory limit.\n", packetPAddr);
+        goto error;
+        }
+
+#if 0
+      // For now, copy the guest Tx packet to the Rx buffer and swap
+      // both the IP and ethernet addresses to simulate another host
+      // returning ping packets.
+      rxBuffer = halNetDev[deviceNo].guestRxArea->rxBuffer;
+      memcpy(rxBuffer, &plex86MemPtr[packetPAddr], packetLen);
+
+      // Swap ethernet source/destination addresses.
+      macHdr = (Bit8u *) (rxBuffer + 0);
+      for (i=0; i<6; i++) {
+        temp8  = macHdr[i];
+        macHdr[i] = macHdr[6 + i];
+        macHdr[6 + i] = temp8;
+        }
+
+      // Swap IP source/destination addresses.
+      ipAddr = (Bit32u *) (rxBuffer + 14 + 12);
+      temp32 = ipAddr[0];
+      ipAddr[0] = ipAddr[1];
+      ipAddr[1] = temp32;
+
+      // Signal the IRQ to the PIC.
+      picIrq(HalNet0Irq, 1);
+
+      // Now mark buffer with the new packet info.
+      halNetDev[deviceNo].guestRxArea->rxBufferLen  = packetLen;
+      halNetDev[deviceNo].guestRxArea->rxBufferFull = 1;
+#endif
+
+      // Write Tx packet to the TUN/TAP interface.
+      txBuffer = &plex86MemPtr[packetPAddr];
+{
+Bit8u *macHdr;
+macHdr = (Bit8u *) (txBuffer + 0);
+fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
+                "dst: %02x:%02x:%02x:%02x:%02x:%02x\n",
+        macHdr[6+0],
+        macHdr[6+1],
+        macHdr[6+2],
+        macHdr[6+3],
+        macHdr[6+4],
+        macHdr[6+5],
+        macHdr[0+0],
+        macHdr[0+1],
+        macHdr[0+2],
+        macHdr[0+3],
+        macHdr[0+4],
+        macHdr[0+5]);
+}
+      ret = write(fdTunTap, txBuffer, packetLen);
+      if ( ret != packetLen ) {
+        fprintf(stderr, "HalCallNetGuestTx: write(%u) bytes to TUN/TAP "
+                        " returned %d.\n", packetLen, ret);
+        goto error;
+        }
+
+      plex86GuestCPU->genReg[GenRegEAX] = 1; // Success.
+      return;
+      }
+
+    default:
+      fprintf(stderr, "halCall(%u) unknown.\n", callNo);
+      goto error;
+    }
+
+error:
+  plex86GuestCPU->genReg[GenRegEAX] = 0; // Fail.
+  plex86TearDown();
+}
+
+
+  void
+tuntapDev0SigIO(int sig) 
+{
+  if ( incrementAtomic(tunTapInService) == 1 ) {
+    // We own the in-service semaphore.
+    tunTapEvent = 1; // Signal main body that there are packets to read.
+    tunTapInService = 0; // Reset in-service semaphore.
+    }
+  else {
+    // The main thread must own the in-service semaphore.  Let it handle
+    // reading the TUN/TAP data.
+    fprintf(stderr, "tuntapDev0SigIO: did not get semaphore.\n");
+    }
+}
+
+  unsigned
+initTunTap(void)
+{
+  char * tuntapDevName = "/dev/net/tun";
+  struct ifreq ifr;
+  int err;
+
+  fdTunTap = open(tuntapDevName, O_RDWR);
+  if ( fdTunTap < 0 ) {
+    fprintf(stderr, "Error opening tuntap device '%s'.\n", tuntapDevName);
+    return(0); // Fail.
+    }
+
+  // IFF_TAP is for Ethernet frames.
+  // IFF_TUN is for IP.
+  // IFF_NO_PI is for not receiving extra meta packet information.
+  ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
+  strncpy(ifr.ifr_name, "tun%d", IFNAMSIZ);
+  err = ioctl(fdTunTap, TUNSETIFF, (void *) &ifr);
+  if ( err < 0 ) {
+    close(fdTunTap);
+    fprintf(stderr, "Error with ioctl(TUNSETIFF).\n");
+    return(0); // Fail.
+    }
+
+  fprintf(stderr, "tuntap device returns interface name '%s'.\n", ifr.ifr_name);
+
+  // Turn off checksumming, since this is a software-only tunnel; there is
+  // no physical transmission media to corrupt the data.
+  //ioctl(fdTunTap, TUNSETNOCSUM, 1); // Fixme: need checksumming?
+
+  fprintf(stderr, "tuntap device '%s' ready, do commands now and type char.\n",
+          tuntapDevName);
+  getchar();
+  fprintf(stderr, "continuing execution...\n");
+
+  fcntl(fdTunTap, F_SETFL, O_NONBLOCK | O_ASYNC);
+
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = tuntapDev0SigIO;
+  sigaction(SIGIO, &sa, NULL); 
+
+  //while( !bridge_term ) {
+  //  sleep(1000); 
+  //  }
+  return(1); // OK
+}
+
+  unsigned
+tuntapReadPacketToGuest(unsigned deviceNo)
+{
+  int packetLen;
+  Bit8u *rxBuffer;
+  static Bit8u rxDrain[MaxEthernetFrameSize];
+
+  if ( halNetDev[deviceNo].registered ) {
+    if ( halNetDev[deviceNo].guestRxArea->rxBufferFull==0 ) {
+      rxBuffer = halNetDev[deviceNo].guestRxArea->rxBuffer;
+      packetLen = read(fdTunTap, rxBuffer, MaxEthernetFrameSize);
+      if ( packetLen > 0 ) {
+Bit8u *macHdr;
+        fprintf(stderr, "tuntapReadPacketToGuest: read %d bytes to guest.\n",
+                packetLen);
+macHdr = (Bit8u *) (rxBuffer + 0);
+fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
+                "src: %02x:%02x:%02x:%02x:%02x:%02x\n",
+        macHdr[0+0],
+        macHdr[0+1],
+        macHdr[0+2],
+        macHdr[0+3],
+        macHdr[0+4],
+        macHdr[0+5],
+        macHdr[6+0],
+        macHdr[6+1],
+        macHdr[6+2],
+        macHdr[6+3],
+        macHdr[6+4],
+        macHdr[6+5]);
+
+        halNetDev[deviceNo].guestRxArea->rxBufferFull = 1;
+        halNetDev[deviceNo].guestRxArea->rxBufferLen  = packetLen;
+        // Signal the IRQ to the PIC.
+        picIrq(HalNet0Irq, 1);
+        }
+      else if ( (packetLen<0) && ((errno!=EAGAIN) && (errno!=EINTR)) ) {
+        fprintf(stderr, "tuntapReadPacketToGuest: read error.\n");
+        }
+      else if ( packetLen==0 ) {
+        // If we have exhausted the packets from TUN/TAP, only then
+        // do we flag the main body to reset tunTapEvent.
+        return 1; // OK.
+        }
+      }
+    else {
+      fprintf(stderr, "tuntapReadPacketToGuest: buffer full.\n");
+      }
+    }
+  else {
+    // Guest network device is not registered.  Drain packets.
+    while ( (packetLen = read(fdTunTap, rxDrain, MaxEthernetFrameSize)) > 0 ) {
+      fprintf(stderr, "tuntapReadPacketToGuest: dev%u unregistered, dropping "
+                      "packet of %d bytes.\n", deviceNo, packetLen);
+      }
+    // If we have exhausted the packets from TUN/TAP, only then
+    // do we flag the main body to reset tunTapEvent.
+    return 1;
+    }
+  return 0; // Do not reset tunTapEvent yet.
+
+#if 0
+  unsigned i, ret;
+  Bit8u   *macHdr, temp8;
+  Bit32u  *ipAddr, temp32;
+
+  while( (packetLen = read(fdTunTap, rxBuffer, sizeof(rxBuffer))) > 0 ) {
+    fprintf(stderr, "sig_io: read %d bytes.\n", packetLen);
+
+    // Swap ethernet source/destination addresses.
+    macHdr = (Bit8u *) (rxBuffer + 0);
+    for (i=0; i<6; i++) {
+      temp8  = macHdr[i];
+      macHdr[i] = macHdr[6 + i];
+      macHdr[6 + i] = temp8;
+      }
+
+    // Swap IP source/destination addresses.
+    ipAddr = (Bit32u *) (rxBuffer + 14 + 12);
+fprintf(stderr, "SrcIP: %02x.%02x.%02x.%02x --> "
+                "DstIP: %02x.%02x.%02x.%02x\n",
+                (ipAddr[0]>>0) & 0xff,
+                (ipAddr[0]>>8) & 0xff,
+                (ipAddr[0]>>16) & 0xff,
+                (ipAddr[0]>>24) & 0xff,
+                (ipAddr[1]>>0) & 0xff,
+                (ipAddr[1]>>8) & 0xff,
+                (ipAddr[1]>>16) & 0xff,
+                (ipAddr[1]>>24) & 0xff);
+    temp32 = ipAddr[0];
+    ipAddr[0] = ipAddr[1];
+    ipAddr[1] = temp32;
+
+    // Write the modified packet back.
+    ret = write(fdTunTap, rxBuffer, packetLen);
+    fprintf(stderr, "write(%u bytes) returns %u bytes.\n",
+            packetLen, ret);
+    }
+
+  if( packetLen < 0 && (errno != EAGAIN && errno != EINTR) ) {
+    bridge_term = 1;
+    return;
+    }
+#endif
+}

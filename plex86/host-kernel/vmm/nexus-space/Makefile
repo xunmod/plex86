@@ -1,0 +1,36 @@
+#  plex86: run multiple x86 operating systems concurrently
+#  Copyright (C) 1999-2003 Kevin P. Lawton
+#
+#  This library is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU Lesser General Public
+#  License as published by the Free Software Foundation; either
+#  version 2 of the License, or (at your option) any later version.
+#
+#  This library is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#  Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public
+#  License along with this library; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+.PHONY: clean dist-clean
+
+include ../../../Rules.make
+
+inc_dirs := -I../../../include -I../../include
+objs := nexus.o util-nexus.o
+
+.c.o:
+	$(HOST_KERNEL_CC) -c $(HOST_KERNEL_CFLAGS) $(inc_dirs) $<
+.S.o:
+	$(HOST_KERNEL_CC) -c $(HOST_KERNEL_CFLAGS) $(inc_dirs) -D__ASSEMBLY__ $<
+
+nexus-space.o: $(objs)
+	$(LD) -o $@ -r $^
+
+clean: 
+	@/bin/rm -f *.o *.s
+
+dist-clean: clean

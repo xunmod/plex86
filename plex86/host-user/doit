@@ -1,0 +1,16 @@
+# For the initrd image, align it at the end of guest physical memory.
+# For example, if you have a 6Meg initrd and 32 megs of guest physical
+# memory, then it goes as 0x2000000 - 0x0600000 = 0x1a00000.  Make
+# 'ramdisk_size='; reflects the size of the initrd image
+#   in terms of Kilobytes.  6M * 1024 == 6144K.
+# 'bogomips=', get the bogomips rating from your host machine and stick it
+#   here (just the integer part).
+# 'mem=nopentium' disables use of 4Meg pages on newer kernels.
+
+./linuxvm \
+  -megs 32 \
+  -linux-image ~/linux/vmlinux-2.4.20-plex86 \
+  -initrd-image 0x1a00000 ~/linux/initrd.6M.img \
+  -command-line \
+    "root=/dev/ram0 ramdisk_size=6144 init=/linuxrc mem=nopentium bogomips=989 rw"
+

@@ -1,0 +1,10 @@
+PERFORMANCE
+===========
+
+Optimize functions in util-nexus.c: mon_memzero, mon_memcpy, mon_memset
+  They could be done a lot more efficiently.
+  Perhaps make mon_memzero function specifically for pages.
+
+Fix extra CR3 reload in nexus.S
+
+Alignment of routines in mon-fault.c

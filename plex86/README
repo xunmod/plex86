@@ -1,0 +1,128 @@
+                Main plex86 source code README file.
+                  http://plex86.sourceforge.net/
+                      Kevin P. Lawton
+          Last modified, Sun Feb 16 13:32:36 EST 2003
+
+
+========= Quick start for the impatient =============================
+
+If you just want to try running plex86, read 'Documentation/quickie.txt'.
+There are some demo files online to make your life easier.
+
+
+========= What is plex86? ===========================================
+
+Plex86 is an x86-specific Virtual Machine (VM) environment which can
+be used in 2 ways:
+
+  1) On its own to run VM-friendly Operating Systems (OSes) with only
+     minimal builtin emulation (system instructions and IO) necessary.
+     Most all of the workload of IO (for example disk & networking) are
+     implemented by special drivers in each guest OS that redirect the
+     IO requests to outside the VM via a Hardware Abstraction Layer (HAL).
+
+     Plex86 uses a very simple and lightweight VM technology, and
+     only executes the guest code at user level privilege.  However,
+     only a few system instructions on x86 are broken with respect
+     to running kernel code at a lower privilege level with respect
+     to virtualization.  And those can be fixed extremely easy in
+     kernels such as Linux, by forcing compilation with a few assembly
+     macros to correct the behaviours.  As well, during a guest kernel
+     configure/compile, it is useful to configure out all the unnessary
+     IO probing and support.
+
+  2) In conjuction with an x86 emulator.  For executing guests which
+     are not VM friendly (likely all closed source OSes and open source
+     ones which do not have the simple mods just mentioned), the emulator
+     can be used to handle system instruction and heavy IO emulation
+     while running application code in the plex86 VM.  Essentially, in
+     this mode, plex86 is an accelerator.  An experimental version of
+     bochs (http://bochs.sourceforge.net/) was demonstrated with this
+     capability.
+
+
+========= Source code directory structure ===========================
+
+./doconfigure:
+
+  This is a somewhat user-friendly convience script which you should
+  use to configure plex86 for your system.  It does a bit of sanity checking
+  for you, and sets up the environment needed by the GNU autoconf script
+  'configure'.  Please use the 'doconfigure' front-end, rather than running
+  configure yourself.
+
+./Documentation:
+
+  The documentation tree for plex86.  Read '00-INDEX' for further information.
+
+./include:
+
+  Project wide include files.
+
+./host-kernel:
+./host-kernel/include:
+./host-kernel/vmm:
+./host-kernel/vmm/host-space:
+./host-kernel/vmm/monitor-space:
+./host-kernel/vmm/nexus-space:
+
+  The interesting part of the plex86 VM occurs in a host kernel module
+  (driver).  'include/' is for includes common to the host kernel module.
+  'vmm/' contains the host-neutral (most of the VM) code, composed of 3
+  "spaces": 'host-space', 'monitor-space', and 'nexus-space'.  'host-space'
+  is the part of the VM monitor which runs within the context of the
+  host kernel.  'monitor-space' is the that code which runs within the
+  context of the VM monitor's own page tables and descriptor tables.
+  And 'nexus-space' is code which can run within either.
+
+./host-kernel/linux:
+./host-kernel/stubs:
+./host-kernel/freebsd:
+./host-kernel/netbsd:
+./host-kernel/beos:
+
+  There is a small amount of code (mostly kernel entry points and
+  call-out functions) which is specific to the host OS environment.
+  For now, only a Linux (2.4.20+) host is supported.  There are some
+  files in the other host directories leftover from the old incarnation
+  of plex86.  I left them there for reference.  As well, the dir 'stubs'
+  serves as a null host, so that a reference set of stubs routines
+  representing the required callout functions are easy to maintain.  This
+  will be handy for beginning a new host port.
+
+./host-user:
+
+  The is the host user application which initializes, allocates, and then
+  controls the VM provided by the kernel space component.  Currently, it
+  also manages the lightweight IO and system instruction emulation as
+  well as network packet redirection for the VM from kernel space, but
+  that will ultimately be moved into the VM monitor proper.
+
+  This component malloc()s physical memory for the guest, and loads
+  a kernel image and possibly an initrd (initial ramdisk) image into
+  the guest memory, before execution within the VM monitor context
+  begins.
+
+./guest-kernel:
+./guest-kernel/linux:
+
+  The goal of the guest VM is to use special drivers to communicate
+  heavy IO workloads like network packets and disk blocks to outside
+  of the VM to be handled, through a Hardware Abstraction Layer (HAL).
+  This lets the guest OS be abstracted from the real IO hardware, providing
+  a truly virtualized guest OS resource, with very lightweight virtualization.
+  This directory contains the guest drivers which effect the communication
+  of those packets/blocks/data.  There is one directory for each possible
+  guest OS.  Currently, only Linux 2.4+ is supported.
+
+./guest-user:
+
+  Empty for now.  In the future, if there are any user programs
+  which run in the guest and which need to interact with the VM, this
+  is where they would go.  I'd imagine that eventually people will
+  think of some lightweight interactions with the VMs that will
+  be beneficial.
+
+./misc:
+
+  Miscellaneous files, but of course.
