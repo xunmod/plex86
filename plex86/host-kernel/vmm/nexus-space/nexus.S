@@ -8,6 +8,9 @@
  *
  */
 
+// Fixme: host/monitor registers we don't handled yet.
+// Fixme: DRx
+// Fixme: TRx
 
 
 .text

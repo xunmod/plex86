@@ -4,23 +4,10 @@
 ////
 ////  Copyright (C) 2003  Kevin P. Lawton
 
-#if 0
-Notes: (Fixme)
-  // Leave zeroed:
-  //   LDTR
-  //   TR
-  //   IDTR
-  //   data segments
-  //   DRx
-  //   TRx
-  //   CR[1..4]
-#endif
 
-#define KernelCodeDesc .long 0x0000ffff ; .long 0x00cf9a00
-#define KernelDataDesc .long 0x0000ffff ; .long 0x00cf9200
-#define UserCodeDesc   .long 0x0000ffff ; .long 0x00cffa00
-#define UserDataDesc   .long 0x0000ffff ; .long 0x00cff200
-#define NullDesc       .long 0x00000000 ; .long 0x00000000
+#define BootCodeDesc .long 0x0000ffff ; .long 0x00cf9b00
+#define BootDataDesc .long 0x0000ffff ; .long 0x00cf9300
+#define NullDesc     .long 0x00000000 ; .long 0x00000000
 
 .text
 .type  _start,@function
@@ -37,31 +24,11 @@ kernelCommandLine:
 
 .globl bootloaderGDT // Bootloader GDT
 bootloaderGDT:
-  //                  2.4.20      2.5.59
-  // LinuxBootCsSlot     2           2
-  // LinuxBootDsSlot     3           3
-  // LinuxKernelCsSlot   2          12
-  // LinuxKernelDsSlot   3          13
-  // LinuxUserCsSlot     4          14
-  // LinuxUserDsSlot     5          15
-
-  NullDesc       // [0]
-  NullDesc       // [1]
-  KernelCodeDesc // [2]
-  KernelDataDesc // [3]
-  UserCodeDesc   // [4]
-  UserDataDesc   // [5]
-  NullDesc       // [6]
-  NullDesc       // [7]
-  NullDesc       // [8]
-  NullDesc       // [9]
-  NullDesc       // [10]
-  NullDesc       // [11]
-  KernelCodeDesc // [12]
-  KernelDataDesc // [13]
-  UserCodeDesc   // [14]
-  UserDataDesc   // [15]
-  .fill 1920, 1, 0 // Remainder of 2k area unused (2k-16*8)
+  NullDesc     // [0]
+  NullDesc     // [1]
+  BootCodeDesc // [2]
+  BootDataDesc // [3]
+  .fill 2016, 1, 0 // Remainder of 2k area unused (2k-4*8)
 
 .globl bootloaderCommandLine // Bootloader command line
 bootloaderCommandLine:

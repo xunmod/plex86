@@ -183,7 +183,7 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
 11) Run plex86:
 
   user> cd host-user
-  user> . doit
+  user> ./doit
 
   Note: The TUN/TAP interface has a lifespan only between open() and close()
   Note: events of the device.  Later, I will add the ability to execute a script

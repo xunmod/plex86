@@ -599,16 +599,18 @@ initLinuxCPUMemenvironment(void)
   // Get pointer to bootloader GDT.
   gdt = (gdt_entry_t *) &plex86MemPtr[BootloaderGDTAddr];
 
-  // Fixme: remove these checks.
-  if (gdt[LinuxBootCsSlot].high != 0x00cf9a00) goto Error;
-  if (gdt[LinuxBootCsSlot].low  != 0x0000ffff) goto Error;
-  if (gdt[LinuxBootDsSlot].high != 0x00cf9200) goto Error;
-  if (gdt[LinuxBootDsSlot].low  != 0x0000ffff) goto Error;
+  // Sanity check that the setup32 area has the expected code/data descriptors,
+  // at the expected location.
+  if ( (gdt[LinuxBootCsSlot].high != 0x00cf9b00) ||
+       (gdt[LinuxBootCsSlot].low  != 0x0000ffff) ||
+       (gdt[LinuxBootDsSlot].high != 0x00cf9300) ||
+       (gdt[LinuxBootDsSlot].low  != 0x0000ffff) ) {
 
-  if (gdt[LinuxUserCsSlot].high != 0x00cffa00) goto Error;
-  if (gdt[LinuxUserCsSlot].low  != 0x0000ffff) goto Error;
-  if (gdt[LinuxUserDsSlot].high != 0x00cff200) goto Error;
-  if (gdt[LinuxUserDsSlot].low  != 0x0000ffff) goto Error;
+    fprintf(stderr, "plex86: Proper boot CS/DS descriptors not found "
+            "in setup32 area.\n");
+    (void) plex86TearDown();
+    exit(1); // Error.
+    }
 
   // ===
   // CPU
@@ -631,20 +633,6 @@ initLinuxCPUMemenvironment(void)
   plex86GuestCPU->sreg[SRegSS].des = * (descriptor_t *) &gdt[LinuxBootDsSlot];
   plex86GuestCPU->sreg[SRegSS].valid = 1;
   plex86GuestCPU->genReg[GenRegESP] = BootloaderStackAddr + 4096; // Fixme:
-
-
-  // Leave zeroed:
-  //   LDTR
-  //   TR
-  //   IDTR
-  //   data segments
-  //   DRx
-  //   TRx
-  //   CR[1..4]
-return;
-
-Error: // Fixme:
-  (void) plex86TearDown();
 }
 
   unsigned
