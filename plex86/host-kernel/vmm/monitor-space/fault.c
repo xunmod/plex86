@@ -159,7 +159,7 @@ handleInt(guestStackContext_t *context)
     /* End of elapsed guest execution duration.  Add elapsed */
     /* cycles to time framework. */
     vm->system.cyclesElapsed += (t1 - vm->system.t0);
-    if ( context->eflags.fields.vip ) {
+    if ( context->eflags.fields.vip ) { // Fixme: do we need this?
       context->eflags.fields.vip = 0;
       }
 
@@ -188,23 +188,82 @@ preGuest(guestStackContext_t *context)
   nexus_t *nexus = (nexus_t *) (((Bit32u) context) & 0xfffff000);
   vm_t    *vm    = (vm_t *) nexus->vm;
 
-  if ( vm->system.cyclesElapsed > 500000 ) { // Fixme
+  STI();
+
+// Fixme: Put CyclesOverhead somewhere else.
+#define CyclesOverhead 980  // Fixme: apply this bias to the cycle counts.
+
+  // Decrement the cyclesElapsed counter by the number of cycles of
+  // overhead between sampling points.  Between the sampling of vm->system.t0,
+  // the code and IRET to get back to the guest, and the interrupt/exception
+  // and related code thereafter, is approximately a certain number of
+  // cpu cycles which are not accounted for when we sample t1.
+  if ( vm->system.cyclesElapsed > CyclesOverhead )
+    vm->system.cyclesElapsed -= CyclesOverhead;
+  else
+    vm->system.cyclesElapsed = 0;
+
+  if ( vm->system.cyclesElapsed > vm->io.cpuToPitRatio ) {
+    unsigned pitClocks;
+//monprint(vm, "pG: EC>\n");
+
+#if 0
+    // NOTE: STI() above is not good with following code.
     vm->mon_request = MonReqCyclesUpdate;
     vm->guest.__mon2host();
+#endif
+    pitClocks = ((unsigned) vm->system.cyclesElapsed) / vm->io.cpuToPitRatio;
+    vm->system.cyclesElapsed = 0; // Reset (fixme: keep remainder)
+    pitExpireClocks(vm, pitClocks);
+//monprint(vm, "pG: EC<\n");
     }
+
+  {
+  guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
+  // I bracket the sampling/reset of halIrq since it is set asynchronously
+  // in the user space hal code via signals.
+  CLI();
+  if ( guestCpu->halIrq != -1 ) {
+    unsigned irq;
+
+//monprint(vm, "pG: hIrq>\n");
+    irq = (unsigned) guestCpu->halIrq;
+    guestCpu->halIrq = -1;
+    if (irq != 3) monpanic(vm, "preGuest: halIrq!=3.\n");
+    STI();
+    //monpanic(vm, "halIrq = %u.\n", irq);
+    picIrq(vm, irq, 1);
+//monprint(vm, "pG: hIrq<\n");
+    }
+  else {
+    STI();
+    }
+  }
+
   if ( vm->linuxVMMode ) {
+    unsigned vector;
+
     if ( vm->system.INTR && context->eflags.fields.vif ) {
       /* If the INTR line is high, and the VIF flag is high, the guest
        * is accepting interrupts.
        */
-      vm->mon_request = MonReqGuestHWInterrupt;
-      vm->guest.__mon2host();
+//monprint(vm, "pG: IAC>\n");
+      vector = picIAC(vm);
+//monprint(vm, "pG: IAC<\n");
+      doGuestInterrupt(vm, vector, 0, 0); // Fixme: flags.
+//monprint(vm, "pG: INT<\n");
       }
+
     /* Set Virtual Interrupt Pending flag to status of INTR line.  When
      * the guest sets the interrupt flag, it will then generate a #GP.
      */
     context->eflags.fields.vip = vm->system.INTR;
     }
+
+#warning "Remove this debug code."
+if (context->eflags.fields.if_ == 0) monpanic_nomess(vm);
+
+  CLI();
 
   /* Record the Time Stamp Counter value _just_ before running the guest. */
   vm->system.t0 = vm_rdtsc();
@@ -236,9 +295,11 @@ handleGuestFault(guestStackContext_t *context)
 
   STI();
 
-  if ( context->eflags.fields.vip ) {
+  if ( context->eflags.fields.vip ) { // Fixme: do we need this?
     context->eflags.fields.vip = 0;
     }
+
+//monprint(vm, "hGF(%u)\n", (unsigned) context->vector);
 
   switch ( context->vector ) {
     case ExceptionDB: /* 1 */

@@ -198,8 +198,9 @@ typedef struct {
   unsigned a20Enable;
   unsigned INTR;
 
-  sysEnter_t sysEnter;
-  Bit64u     tsc;
+  sysEnter_t   sysEnter;
+  Bit64u       tsc;
+  volatile int halIrq;
   } __attribute__ ((packed)) guest_cpu_t;
 
 
@@ -258,7 +259,7 @@ typedef Bit32u phyAddr_t;
 #define MonReqGuestFault        6
 #define MonReqPinUserPage       7
 #define MonReqPanic             8
-#define MonReqGuestHWInterrupt  9
+
 #define MonReqCyclesUpdate     10
 
 #define VMStateFDOpened               0x001

@@ -23,6 +23,8 @@ extern int mon_vprint(vm_t *vm, char *fmt, va_list args);
   void
 monpanic(vm_t *vm, char *fmt, ...)
 {
+  toHostFlushPrintBuf(vm);
+
   monprint(vm, "plex86 panic: ");
   if (fmt) {
     va_list args;
@@ -49,6 +51,7 @@ monpanic_nomess(vm_t *vm)
 {
 loop:
   CLI();
+
   vm->mon_request = MonReqPanic;
   vm->guest.__mon2host();
 

@@ -57,6 +57,8 @@ static unsigned  setDRx(vm_t *, unsigned drx, Bit32u val32);
 static phyAddr_t translateLinToPhy(vm_t *, Bit32u lAddr);
 static unsigned  decodeModRM(vm_t *, Bit8u *opcodePtr, modRM_t *modRMPtr);
 static unsigned  loadGuestSegment(vm_t *, unsigned sreg, selector_t selector);
+static void      getObjectLAddr(vm_t *vm, Bit8u *obj, Bit32u lAddr0,
+                                unsigned len);
 static Bit32u    getGuestDWord(vm_t *, Bit32u lAddr);
 static Bit16u    getGuestWord(vm_t *, Bit32u lAddr);
 static void      writeGuestDWord(vm_t *vm, Bit32u lAddr, Bit32u val);
@@ -64,13 +66,11 @@ static descriptor_t *fetchGuestDescBySel(vm_t *, selector_t, descriptor_t *,
                                          unsigned flags);
 static descriptor_t *fetchGuestDescByLAddr(vm_t *, Bit32u laddr,
                                            descriptor_t *desc);
-//static unsigned  inp(unsigned iolen, unsigned port);
-//static void      outp(unsigned iolen, unsigned port, unsigned val);
+static unsigned  inp(vm_t *, unsigned iolen, unsigned port);
+static void      outp(vm_t *, unsigned iolen, unsigned port, unsigned val);
 
 //static void      doIRET(void);
 static unsigned  doWRMSR(vm_t *vm);
-static void      doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags,
-                                  Bit32u errorCode);
 
 static void guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t selector);
 
@@ -120,6 +120,8 @@ static const int guestStackGenRegOffsets[8] = {
   void
 doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
 {
+//monprint(vm, "doGF(%u)\n", fault);
+
   switch (fault) {
 
     case ExceptionUD:
@@ -159,7 +161,7 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
         }
       else {
         // #NM from user code - invoke kernel #NM handler.
-monprint(vm, "#NM (CPL!=0).\n"); // Fixme:
+//monprint(vm, "#NM (CPL!=0).\n"); // Fixme:
         doGuestInterrupt(vm, ExceptionNM, IntFlagAssertRF, 0);
         //emulateUserInstr(vm);
         }
@@ -236,101 +238,21 @@ translateLinToPhy(vm_t *vm, Bit32u lAddr)
   unsigned
 emulateSysInstr(vm_t *vm)
 {
-  phyAddr_t pAddr0, pAddr1;
   unsigned b0, iLen=0;
   Bit8u    opcode[16];
-  Bit32u  *opcodeDWords;
   modRM_t modRM;
-  unsigned  pOff;
-  Bit32u page0Len, page1Len;
   unsigned opsize = 1; // 32-bit opsize by default.
   guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
   guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
 
-  if (guestCpu->cr0.fields.pg) {
-    Bit32u lAddr0;
-    Bit8u *phyPagePtr;
-
-    lAddr0 = EIP; // Forget segmentation base for Linux.
-    pAddr0 = translateLinToPhy(vm, lAddr0);
-    if (pAddr0 == LinAddrNotAvailable) {
-      monpanic(vm, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
-              lAddr0);
-      }
-    pOff = pAddr0 & 0xfff;
-    if ( pOff <= 0xff0 ) {
-      page0Len = 16;
-      page1Len = 0;
-      pAddr1   = pAddr0; // Keep compiler quiet.
-      }
-    else {
-      page0Len = 0x1000 - pOff;
-      page1Len = 16 - page0Len;
-      pAddr1    = translateLinToPhy(vm, lAddr0 + page0Len);
-      if (pAddr1 == LinAddrNotAvailable) {
-        monpanic(vm, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
-                lAddr0 + page0Len);
-        }
-      }
-
-fetch16:
-
-    if ( pAddr0 >= (vm->pages.guest_n_bytes-16) ) {
-      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
-              "beyond memory.\n", pAddr0);
-      }
-    if ( page0Len == 16 ) {
-      // Draw in 16 bytes from guest memory into a local array so we don't
-      // have to worry about edge conditions when decoding.  All accesses are
-      // within a single physical page.
-      // Fixme: we could probably use the linear address (corrected for
-      // Fixme: monitor CS.base) to access the page without creating a window.
-      /* Open a window into guest physical memory. */
-      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr0>>12,
-                                vm->guest.addr.tmp_phy_page0);
-      opcodeDWords = (Bit32u*) &opcode[0];
-      opcodeDWords[0] = * (Bit32u*) &phyPagePtr[pOff+ 0];
-      opcodeDWords[1] = * (Bit32u*) &phyPagePtr[pOff+ 4];
-      opcodeDWords[2] = * (Bit32u*) &phyPagePtr[pOff+ 8];
-      opcodeDWords[3] = * (Bit32u*) &phyPagePtr[pOff+12];
-      }
-    else {
-      unsigned i;
-
-      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr0>>12,
-                                vm->guest.addr.tmp_phy_page0);
-      // Fetch initial bytes from page0.
-      for (i=0; i<page0Len; i++) {
-        opcode[i] = * (Bit8u*) &phyPagePtr[pOff + i];
-        }
-
-      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr1>>12,
-                                vm->guest.addr.tmp_phy_page0);
-      // Fetch remaining bytes from page1.
-      for (i=0; i<page1Len; i++) {
-        opcode[page0Len + i] = * (Bit8u*) &phyPagePtr[i];
-        }
-      }
-    }
-  else {
-    pAddr0 = EIP; // Forget segmentation base for Linux.
-    pOff = pAddr0 & 0xfff;
-    if ( pOff <= 0xff0 ) {
-      page0Len = 16;
-      page1Len = 0;
-      pAddr1   = pAddr0; // Keep compiler quiet.
-      }
-    else {
-      page0Len = 0x1000 - pOff;
-      page1Len = 16 - page0Len;
-      pAddr1    = pAddr0 + page0Len;
-      }
-    goto fetch16;
-    }
+  getObjectLAddr(vm, opcode, EIP, 16);
 
 decodeOpcode:
 
   b0 = opcode[iLen++];
+
+//monprint(vm, "b0=0x%x\n", b0);
+
   // monprint(vm, "instruction @ addr=0x%x is 0x%x\n", pAddr, b0);
   switch (b0) {
     case 0x0f: // 2-byte escape.
@@ -701,29 +623,23 @@ return 0; // defer to user space implementation for now.
 
     case 0xe4: // IN_ALIb
       {
-return 0; // defer to user space implementation for now.
-#if 0
       unsigned port8;
       Bit8u    al;
 
       port8 = opcode[iLen++];
-      al = inp(1, port8);
-      plex86GuestCPU->genReg[GenRegEAX] &= ~0xff;
-      plex86GuestCPU->genReg[GenRegEAX] |= al;
+      al = inp(vm, 1, port8);
+      guestStackContext->eax &= ~0xff;
+      guestStackContext->eax |= al;
       goto advanceInstruction;
-#endif
       }
 
     case 0xe6: // OUT_IbAL
       {
-return 0; // defer to user space implementation for now.
-#if 0
       unsigned port8;
 
       port8 = opcode[iLen++];
-      outp(1, port8, plex86GuestCPU->genReg[GenRegEAX] & 0xff);
+      outp(vm, 1, port8, guestStackContext->eax & 0xff);
       goto advanceInstruction;
-#endif
       }
 
     case 0xea: // JMP_Ap (IdIw)
@@ -744,49 +660,41 @@ return 0; // defer to user space implementation for now.
 
     case 0xec: // IN_ALDX
       {
-return 0; // defer to user space implementation for now.
-#if 0
-      unsigned dx, al;
+      unsigned dx;
+      Bit8u    al;
 
-      dx = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
-      al = inp(1, dx);
-      plex86GuestCPU->genReg[GenRegEAX] &= ~0xff;
-      plex86GuestCPU->genReg[GenRegEAX] |= al;
+      dx = guestStackContext->edx & 0xffff;
+      al = inp(vm, 1, dx);
+      guestStackContext->eax &= ~0xff;
+      guestStackContext->eax |= al;
       goto advanceInstruction;
-#endif
       }
 
     case 0xee: // OUT_DXAL
       {
-return 0; // defer to user space implementation for now.
-#if 0
       unsigned dx, al;
 
-      dx = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
-      al = plex86GuestCPU->genReg[GenRegEAX] & 0xff;
-      outp(1, dx, al);
+      dx = guestStackContext->edx & 0xffff;
+      al = guestStackContext->eax & 0xff;
+      outp(vm, 1, dx, al);
       goto advanceInstruction;
-#endif
       }
 
     case 0xef: // OUT_DXeAX
       {
-return 0; // defer to user space implementation for now.
-#if 0
       unsigned dx;
       Bit32u  eax;
 
-      dx  = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
-      eax = plex86GuestCPU->genReg[GenRegEAX];
+      dx  = guestStackContext->edx & 0xffff;
+      eax = guestStackContext->eax;
       if ( opsize==0 ) { // 16-bit opsize.
         eax &= 0xffff;
-        outp(2, dx, eax);
+        outp(vm, 2, dx, eax);
         }
       else {
-        outp(4, dx, eax);
+        outp(vm, 4, dx, eax);
         }
       goto advanceInstruction;
-#endif
       }
 
     case 0xf0: // LOCK (used to make IRET fault).
@@ -798,40 +706,35 @@ return 0; // defer to user space implementation for now.
 
     case 0xf4: // HLT
       {
-return 0; // defer to user space implementation for now.
-#if 0
-      if ( !(plex86GuestCPU->eflags & FlgMaskIF) ) {
-        monprint(vm, "HLT with IF==0.\n");
+      // Fixme: HLT for non linuxVM mode.
+      if ( !guestStackContext->eflags.fields.vif ) {
+        monpanic(vm, "HLT with VIF==0.\n");
         return 0;
         }
       while (1) {
-        if ( plex86GuestCPU->INTR )
+        if ( vm->system.INTR )
           break;
         // Fixme: For now I expire 1 pit clock, which is a good number of
         // cpu cycles, but nothing is going on anyways.
         //tsc += cpuToPitRatio;
-        pitExpireClocks( 1 );
+        pitExpireClocks(vm, 1);
         }
       goto advanceInstruction;
-#endif
       }
 
-    case 0xfb: // STI (PVI triggers this when VIF is asserted.
+    case 0xfb: // STI (PVI triggers this when VIF is asserted).
       {
-return 0; // defer to user space implementation for now.
-#if 0
       unsigned vector;
 
-      plex86GuestCPU->eip += iLen; // Commit instruction length.
-      plex86GuestCPU->eflags |= FlgMaskIF;
-      if ( !plex86GuestCPU->INTR ) {
-        monprint(vm, "STI: INTR=0?.\n");
+      EIP += iLen; // Commit instruction length.
+      guestStackContext->eflags.fields.vif = 1;
+      if ( !vm->system.INTR ) {
+        monpanic(vm, "STI: system.INTR=0?.\n");
         return 0;
         }
-      vector = picIAC(); // Get interrupt vector from PIC.
-      doGuestInterrupt(vm, vector, 0, 0);
+      vector = picIAC(vm); // Get interrupt vector from PIC.
+      doGuestInterrupt(vm, vector, 0, 0); // Fixme: flags to pass
       return 1;
-#endif
       }
 
     default:
@@ -849,63 +752,31 @@ advanceInstruction:
   void
 emulateUserInstr(vm_t *vm)
 {
-  phyAddr_t pAddr, pOff;
   unsigned b0, iLen=0;
   Bit8u    opcode[16];
-  Bit32u  *opcodeDWords;
   // modRM_t  modRM;
   // unsigned opsize = 1; // 32-bit opsize by default.
-  Bit32u   lAddr;
-  guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
 
-  if ( guestCpu->cr0.fields.pg == 0 ) {
-    monpanic(vm, "emulateUserInstr: cr0.pg==0.\n");
-    }
-  lAddr = EIP; // Forget segmentation base for Linux.
-  pAddr = translateLinToPhy(vm, lAddr);
-  if (pAddr == LinAddrNotAvailable) {
-    monpanic(vm, "emulateUserInstr: lin-->phy translation failed (0x%x).\n",
-             lAddr);
-    }
-  if ( pAddr >= (vm->pages.guest_n_bytes-16) ) {
-    monpanic(vm, "emulateUserInstr: physical address of 0x%x "
-             "beyond memory.\n", pAddr);
-    }
-  pOff = pAddr & 0xfff; // Physical address page offset.
-  if ( pOff <= 0xff0 ) {
-    Bit8u *phyPagePtr;
-
-    // Draw in 16 bytes from guest memory into a local array so we don't
-    // have to worry about edge conditions when decoding.  All accesses are
-    // within a single physical page.
-    // Fixme: we could probably use the linear address (corrected for
-    // Fixme: monitor CS.base) to access the page without creating a window.
-    /* Open a window into guest physical memory. */
-    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
-                              vm->guest.addr.tmp_phy_page0);
-    opcodeDWords = (Bit32u*) &opcode[0];
-    opcodeDWords[0] = * (Bit32u*) &phyPagePtr[pOff+ 0];
-    opcodeDWords[1] = * (Bit32u*) &phyPagePtr[pOff+ 4];
-    opcodeDWords[2] = * (Bit32u*) &phyPagePtr[pOff+ 8];
-    opcodeDWords[3] = * (Bit32u*) &phyPagePtr[pOff+12];
-    }
-  else {
-    monpanic(vm, "emulateUserInstr: possible page crossing.\n");
-    }
+  getObjectLAddr(vm, opcode, EIP, 16);
 
 // decodeOpcode:
 
   b0 = opcode[iLen++];
   //monprint(vm, "instruction @ eip=0x%x is 0x%x\n", plex86GuestCPU->eip, b0);
+
+//monprint(vm, "U b0=0x%x.\n", b0);
+
   switch (b0) {
 
     case 0xcd: // IntIb
       {
       unsigned Ib;
 
+//monprint(vm, "U b0=0x%x >>\n", b0);
       Ib = opcode[iLen++];
       EIP += iLen; // Commit instruction length.
       doGuestInterrupt(vm, Ib, IntFlagSoftInt, 0);
+//monprint(vm, "U b0=0x%x <<\n", b0);
       break;
       }
 
@@ -1141,48 +1012,137 @@ loadGuestSegment(vm_t *vm, unsigned sreg, selector_t selector)
   return(1); // OK.
 }
 
+  void
+getObjectLAddr(vm_t *vm, Bit8u *obj, Bit32u lAddr0, unsigned len)
+{
+  // Get an object of arbitrary size (up to 4K) from linear memory.
+  // The object can cross a page boundary, and paging can be disabled
+  // or enabled.  This is a general case read operation.
+
+  phyAddr_t pAddr0, pAddr1;
+  Bit8u    *phyPagePtr;
+  unsigned  pOff;
+
+  pAddr0 = translateLinToPhy(vm, lAddr0);
+  if (pAddr0 == LinAddrNotAvailable) {
+    monpanic(vm, "getObjectLAddr: lin-->phy translation failed (0x%x).\n",
+             lAddr0);
+    }
+  pOff = pAddr0 & 0xfff;
+  if ( pOff <= (0x1000 - len) ) {
+    // Object contained within same page.
+    if ( pAddr0 > (vm->pages.guest_n_bytes-len) ) {
+      monpanic(vm, "getObjectLAddr: pAddr0 OOB (0x%x).\n", pAddr0);
+      }
+    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr0>>12,
+                              vm->guest.addr.tmp_phy_page0);
+    if ( len == 4 ) {
+      // Optimize for dwords.
+      * ((Bit32u*) obj) = * (Bit32u*) &phyPagePtr[pOff];
+      }
+    else {
+      // Arbitrarily sized objects.
+      unsigned i;
+      for (i=0; i<len; i++) {
+        *obj++ = * (Bit8u*) &phyPagePtr[pOff+i];
+        }
+      }
+    }
+  else {
+    // object crosses multiple pages.
+    unsigned i, page0Len, page1Len;
+
+    page0Len = 0x1000 - pOff;
+    page1Len = len - page0Len;
+    pAddr1   = translateLinToPhy(vm, lAddr0 + page0Len);
+    if (pAddr1 == LinAddrNotAvailable) {
+      monpanic(vm, "getObjectLAddr: lin-->phy translation failed (0x%x).\n",
+              lAddr0 + page0Len);
+      }
+    if ( pAddr0 > (vm->pages.guest_n_bytes-page0Len) ) {
+      monpanic(vm, "getObjectLAddr: pAddr0 OOB (0x%x).\n", pAddr0);
+      }
+    if ( pAddr1 > (vm->pages.guest_n_bytes-page1Len) ) {
+      monpanic(vm, "getObjectLAddr: pAddr1 OOB (0x%x).\n", pAddr1);
+      }
+
+    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr0>>12,
+                              vm->guest.addr.tmp_phy_page0);
+    for (i=0; i<page0Len; i++) {
+      *obj++ = * (Bit8u*) &phyPagePtr[pOff+i];
+      }
+
+    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr1>>12,
+                              vm->guest.addr.tmp_phy_page0);
+    for (i=0; i<page1Len; i++) {
+      *obj++ = * (Bit8u*) &phyPagePtr[i];
+      }
+    }
+}
+
   Bit32u
 getGuestDWord(vm_t *vm, Bit32u lAddr)
 {
-  phyAddr_t pAddr;
-  Bit8u    *phyPagePtr;
+  Bit32u    val32;
+  unsigned  pOff;
 
-  pAddr = translateLinToPhy(vm, lAddr);
+  pOff = lAddr & 0xfff;
+  if ( pOff <= (0x1000-4) ) {
+    Bit8u    *phyPagePtr;
+    phyAddr_t pAddr;
 
-  if (pAddr == LinAddrNotAvailable) {
-    monpanic(vm, "getGuestDWord: could not translate address.\n");
+    pAddr = translateLinToPhy(vm, lAddr);
+    if (pAddr == LinAddrNotAvailable) {
+      monpanic(vm, "getGuestDWord: could not translate address 0x%x.\n",
+               lAddr);
+      }
+    if ( pAddr > (vm->pages.guest_n_bytes-4) ) {
+      monpanic(vm, "getGuestDWord: pAddr OOB (0x%x).\n", pAddr);
+      }
+    // dword contained within same page.
+    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
+                              vm->guest.addr.tmp_phy_page0);
+    val32 = * (Bit32u*) &phyPagePtr[pOff];
     }
-  if ( pAddr >= (vm->pages.guest_n_bytes-3) ) {
-    monpanic(vm, "getGuestDWord: phy address OOB.\n");
+  else {
+    // Use general case convenience function which can get an object
+    // from linear memory anywhere, including crossing page boundaries.
+    getObjectLAddr(vm, (Bit8u*) &val32, lAddr, 4);
     }
-  if ( (pAddr & 0xfff) >= 0xffd ) {
-    monpanic(vm, "getGuestDWord: crosses page boundary.\n");
-    }
-  phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
-                            vm->guest.addr.tmp_phy_page0);
-  return( * (Bit32u*) &phyPagePtr[pAddr & 0xfff] );
+  return( val32 );
 }
 
   Bit16u
 getGuestWord(vm_t *vm, Bit32u lAddr)
 {
-  phyAddr_t pAddr;
-  Bit8u    *phyPagePtr;
+  Bit16u    val16;
+  unsigned  pOff;
 
-  pAddr = translateLinToPhy(vm, lAddr);
+  pOff = lAddr & 0xfff;
+  if ( pOff <= (0x1000-2) ) {
+    Bit8u    *phyPagePtr;
+    phyAddr_t pAddr;
 
-  if (pAddr == LinAddrNotAvailable) {
-    monpanic(vm, "getGuestWord: could not translate address.\n");
+    pAddr = translateLinToPhy(vm, lAddr);
+    if (pAddr == LinAddrNotAvailable) {
+      monpanic(vm, "getGuestWord: could not translate address 0x%x.\n",
+               lAddr);
+      }
+    if ( pAddr > (vm->pages.guest_n_bytes-2) ) {
+      monpanic(vm, "getGuestWord: pAddr OOB (0x%x).\n", pAddr);
+      }
+    // word contained within same page.
+    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
+                              vm->guest.addr.tmp_phy_page0);
+    val16 = * (Bit16u*) &phyPagePtr[pOff];
     }
-  if ( pAddr >= (vm->pages.guest_n_bytes-1) ) {
-    monpanic(vm, "getGuestWord: phy address OOB.\n");
+  else {
+    // Use general case convenience function which can get an object
+    // from linear memory anywhere, including crossing page boundaries.
+    getObjectLAddr(vm, (Bit8u*) &val16, lAddr, 2);
     }
-  if ( (pAddr & 0xfff) >= 0xfff ) {
-    monpanic(vm, "getGuestWord: crosses page boundary.\n");
-    }
-  phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
-                            vm->guest.addr.tmp_phy_page0);
-  return( * (Bit16u*) &phyPagePtr[pAddr & 0xfff] );
+
+  return( val16 );
 }
 
   void
@@ -1275,23 +1235,22 @@ fetchGuestDescBySel(vm_t *vm, selector_t sel, descriptor_t *desc, unsigned flags
 }
 
 
-#if 0
   unsigned
-inp(unsigned iolen, unsigned port)
+inp(vm_t *vm, unsigned iolen, unsigned port)
 {
   switch ( port ) {
     case 0x21:
-      return( picInp(iolen, port) );
+      return( picInp(vm, iolen, port) );
     case 0x40:
-      return( pitInp(iolen, port) );
+      return( pitInp(vm, iolen, port) );
     case 0x61:
-      return( pitInp(iolen, port) );
+      return( pitInp(vm, iolen, port) );
 
     case 0x71:
-      return( cmosInp(iolen, port) );
+      return( cmosInp(vm, iolen, port) );
     case 0x3d5:
     case 0x3da:
-      return( vgaInp(iolen, port) );
+      return( vgaInp(vm, iolen, port) );
 
     case 0x30:
       monprint(vm, "inp(0x30) ???\n");
@@ -1304,13 +1263,11 @@ inp(unsigned iolen, unsigned port)
     }
 
 error:
-  plex86TearDown(); exit(1);
+  monpanic(vm, "inp: bailing.\n");
 }
-#endif
 
-#if 0
   void
-outp(unsigned iolen, unsigned port, unsigned val)
+outp(vm_t *vm, unsigned iolen, unsigned port, unsigned val)
 {
   //monprint(vm, "outp: port=0x%x, val=0x%x\n", port, val);
   switch ( port ) {
@@ -1318,26 +1275,26 @@ outp(unsigned iolen, unsigned port, unsigned val)
     case 0x21:
     case 0xa0:
     case 0xa1:
-      picOutp( iolen, port, val );
+      picOutp(vm, iolen, port, val);
       return;
 
     case 0x40:
     case 0x41:
     case 0x42:
     case 0x43:
-      pitOutp(1, port, val);
+      pitOutp(vm, 1, port, val);
       return;
 
     case 0x61:
-      pitOutp(1, port, val);
+      pitOutp(vm, 1, port, val);
       return;
 
     case 0x70:
-      cmosOutp(1, port, val);
+      cmosOutp(vm, 1, port, val);
       return;
 
     case 0x80:
-      port0x80 = val;
+      vm->io.port0x80 = val;
       //monprint(vm, "Port0x80 = 0x%02x\n", port0x80);
       return;
 
@@ -1346,7 +1303,7 @@ outp(unsigned iolen, unsigned port, unsigned val)
     case 0x3c9:
     case 0x3d4:
     case 0x3d5:
-      vgaOutp(1, port, val);
+      vgaOutp(vm, 1, port, val);
       return;
 
     case 0x3f2:
@@ -1359,9 +1316,8 @@ outp(unsigned iolen, unsigned port, unsigned val)
     }
 
 error:
-  plex86TearDown(); exit(1);
+  monpanic(vm, "outp: bailing.\n");
 }
-#endif
 
 
   void      

@@ -624,6 +624,7 @@ hostOSFreePage(void *ptr)
   unsigned
 hostOSGetAllocedMemPhyPages(Bit32u *page, int max_pages, void *ptr, unsigned size)
 {
+
   return( retrievePhyPages(page, max_pages, ptr, size) );
 }
 
@@ -656,7 +657,7 @@ hostOSKernelPrint(char *fmt, ...)
 hostOSUserPrint(vm_t *vm, char *fmt, ...)
 {
   if ( (vm == 0) ||
-       1 ) {
+       1 ) { // fixme: hostOSUserPrint
     /* We can not print to the user buffer given the current
      * conditions.  Print using the kernel services instead.
      */

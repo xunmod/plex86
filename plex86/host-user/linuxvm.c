@@ -21,7 +21,6 @@
 #include "linuxvm.h"
 #include "linux-setup.h"
 #include "eflags.h"
-#include "io.h"
 #include "hal.h"
 #include "hal-user.h"
 #include "x86-emu.h"
@@ -105,6 +104,7 @@ static void initLinuxCPUMemenvironment(void);
 static unsigned  executeLinux(void);
 
 static void      myCtrlCHandler(int signum);
+static void doVGADump(void);
 
 
 // =========
@@ -684,46 +684,8 @@ initLinuxSetupPage(void)
   void
 initLinuxIOenvironment(void)
 {
-  //   no auto-eoi
-  memset(&picMaster, 0, sizeof(picMaster));
-  picMaster.imr = 0xff;
-  picMaster.vectorOffset = 0x20;
-
-  //   no auto-eoi
-  memset(&picSlave, 0, sizeof(picSlave));
-  picSlave.imr = 0xfb; // (irq 9?)
-  picSlave.vectorOffset = 0x28;
-
-  // NMI diabled.
-
-  // CMOS
-  memset(&cmos, 0, sizeof(cmos));
-  cmos.reg[REG_STAT_A] = 0x26;
-  cmos.reg[REG_STAT_B] = 0x02;
-  cmos.reg[REG_STAT_C] = 0x00;
-  cmos.reg[REG_STAT_D] = 0x80;
-  if (guestCPUID.featureFlags.fields.fpu)
-    cmos.reg[REG_EQUIPMENT_BYTE] |= 0x02; // FPU supported.
-  cmos.reg[REG_SEC]       = 0;
-  cmos.reg[REG_MIN]       = 30;
-  cmos.reg[REG_HOUR]      = 10;
-  cmos.reg[REG_WEEK_DAY]  = 4;
-  cmos.reg[REG_MONTH_DAY] = 0x12;
-  cmos.reg[REG_MONTH]     = 1;
-  cmos.reg[REG_YEAR]      = 3;
-
-  // PITs.  The state of the 82C54 is undefined after power-up.
-  memset(&pit, 0, sizeof(pit));
-  pit.timer[0].GATE = 1; // Tied to + logic.
-  pit.timer[0].OUT  = 1;
-  pit.timer[1].GATE = 1; // Tied to + logic.
-  pit.timer[1].OUT  = 1;
-  pit.timer[2].GATE = 1; // Port 0x61 bit0 controls this.
-  pit.timer[2].OUT  = 1;
-
-  memset(&vga, 0, sizeof(vga));
-
   plex86GuestCPU->INTR = 0;
+  plex86GuestCPU->halIrq = -1;
 }
 
   void
@@ -855,23 +817,23 @@ executeLoop:
         break;
       default:
         fprintf(stderr, "ret = %d\n", ret);
+        break;
       }
     }
   else {
-    unsigned pitClocks;
-    unsigned vector;
+    //unsigned pitClocks;
+    //unsigned vector;
 
     switch ( executeMsg.monitorState.request ) {
       case MonReqFlushPrintBuf:
         fprintf(stderr, "::%s", plex86PrintBuffer);
         //tsc += executeMsg.cyclesExecuted;
-//fprintf(stderr, "cyclesExecuted = %llu.\n", executeMsg.cyclesExecuted);
-        if (executeMsg.cyclesExecuted &&
-            (executeMsg.cyclesExecuted < minCyclesExecuted))
-          minCyclesExecuted = executeMsg.cyclesExecuted;
-        BiasCycles( executeMsg.cyclesExecuted );
-        pitClocks = ((unsigned) executeMsg.cyclesExecuted) / cpuToPitRatio;
-        pitExpireClocks( pitClocks );
+        goto executeLoop;
+
+      case MonReqRedirect:
+        // Monitor had an interrupt redirect and their was work to do,
+        // so it returned from the ioctl() call.  Nothing for us to do
+        // except return to the monitor.
         goto executeLoop;
 
       case MonReqPanic:
@@ -882,45 +844,20 @@ executeLoop:
       case MonReqGuestFault:
         //tsc += executeMsg.cyclesExecuted;
 //fprintf(stderr, "cyclesExecuted = %llu.\n", executeMsg.cyclesExecuted);
+#if 0
         if (executeMsg.cyclesExecuted &&
             (executeMsg.cyclesExecuted < minCyclesExecuted))
           minCyclesExecuted = executeMsg.cyclesExecuted;
         BiasCycles( executeMsg.cyclesExecuted );
         pitClocks = ((unsigned) executeMsg.cyclesExecuted) / cpuToPitRatio;
         pitExpireClocks( pitClocks );
+#endif
         if ( doGuestFault(executeMsg.monitorState.guestFaultNo,
                           executeMsg.monitorState.guestFaultError) ) {
 plex86GuestCPU->eflags &= ~0x10000; // Fixme: clear RF
           goto executeLoop;
           }
         break;
-
-      case MonReqGuestHWInterrupt:
-        // fprintf(stderr, "MonReqGuestHWInterrupt:\n");
-        //tsc += executeMsg.cyclesExecuted;
-//fprintf(stderr, "cyclesExecuted = %llu.\n", executeMsg.cyclesExecuted);
-        if (executeMsg.cyclesExecuted &&
-            (executeMsg.cyclesExecuted < minCyclesExecuted))
-          minCyclesExecuted = executeMsg.cyclesExecuted;
-        BiasCycles( executeMsg.cyclesExecuted );
-        pitClocks = ((unsigned) executeMsg.cyclesExecuted) / cpuToPitRatio;
-        pitExpireClocks( pitClocks );
-        vector = picIAC();
-        doInterrupt(vector, 0, 0);
-plex86GuestCPU->eflags &= ~0x10000; // Fixme: clear RF
-        goto executeLoop;
-
-      case MonReqCyclesUpdate:
-        //tsc += executeMsg.cyclesExecuted;
-//fprintf(stderr, "cyclesExecuted = %llu.\n", executeMsg.cyclesExecuted);
-        if (executeMsg.cyclesExecuted &&
-            (executeMsg.cyclesExecuted < minCyclesExecuted))
-          minCyclesExecuted = executeMsg.cyclesExecuted;
-        BiasCycles( executeMsg.cyclesExecuted );
-        pitClocks = ((unsigned) executeMsg.cyclesExecuted) / cpuToPitRatio;
-        pitExpireClocks( pitClocks );
-plex86GuestCPU->eflags &= ~0x10000; // Fixme: clear RF
-        goto executeLoop;
 
       default:
         fprintf(stderr, "plex86: executeMsg.request = %u\n",
@@ -949,4 +886,32 @@ fprintf(stderr, "Attempt to read tun/tap device returns %d.\n", packetLen);
 }
 #endif
   exit(1);
+}
+
+  void
+doVGADump(void)
+{
+#if 0
+  // VGA text framebuffer dump.
+  unsigned col, c, i, lines;
+  unsigned char lineBuffer[81];
+
+  unsigned framebuffer_start;
+
+  framebuffer_start = 0xb8000 + 2*((vga.CRTC.reg[12] << 8) + vga.CRTC.reg[13]);
+  lines = 204; // 204 Max
+  //lines = 160; // 204 Max
+
+  for (i=0; i<2*80*lines; i+=2*80) {
+    for (col=0; col<80; col++) {
+      c = plex86MemPtr[framebuffer_start + i + col*2];
+      if ( isgraph(c) )
+        lineBuffer[col] = c;
+      else
+        lineBuffer[col] = ' ';
+      }
+    lineBuffer[sizeof(lineBuffer)-1] = 0; // Null terminate string.
+    fprintf(stderr, "%s\n", lineBuffer);
+    }
+#endif
 }

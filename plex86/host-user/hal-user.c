@@ -26,7 +26,6 @@
 #include "plex86.h"
 #include "linuxvm.h"
 #include "linux-setup.h"
-#include "io.h"
 #include "hal.h"
 #include "hal-user.h"
 
@@ -470,7 +469,9 @@ fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
         halNetDev[deviceNo].guestRxArea->rxBufferFull = 1;
         halNetDev[deviceNo].guestRxArea->rxBufferLen  = packetLen;
         // Signal the IRQ to the PIC.
-        picIrq(HalNet0Irq, 1);
+        //picIrq(HalNet0Irq, 1);
+#warning "fixme: was picIrq(HalNet0Irq, 1);"
+        plex86GuestCPU->halIrq = HalNet0Irq;
         }
       else if ( (packetLen<0) && ((errno!=EAGAIN) && (errno!=EINTR)) ) {
         fprintf(stderr, "tuntapReadPacketToGuest: read error.\n");

@@ -506,6 +506,7 @@ guestPageFault(vm_t *vm, guestStackContext_t *context, Bit32u cr2)
 {
   Bit32u   guest_ppi, error, gerror;
   unsigned us, rw;
+  unsigned mapResult;
 
   /* Make sure this laddr does not conflict with monitor space */
   if ( (cr2 & 0xffc00000) == vm->mon_pde_mask )
@@ -521,7 +522,9 @@ guestPageFault(vm_t *vm, guestStackContext_t *context, Bit32u cr2)
 /* +++ should base attr (currently 0) on whether this is */
 /* code or data???  only if siv==1 */
 
-  switch (mapGuestLinAddr(vm, cr2, &guest_ppi, us, rw, 0, &gerror)) {
+  mapResult = mapGuestLinAddr(vm, cr2, &guest_ppi, us, rw, 0, &gerror);
+
+  switch ( mapResult ) {
     case MapLinOK:
 //monprint(vm, "GLA: 0x%x OK.\n", cr2);
       return;

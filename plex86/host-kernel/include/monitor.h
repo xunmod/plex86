@@ -24,6 +24,7 @@
 #include "paging.h"
 #include "eflags.h"
 #include "guest_stack_context.h"
+#include "io.h"
 
 #ifndef UNUSED
 #  define UNUSED(x) ((void)(x))
@@ -369,6 +370,18 @@ typedef struct {
     Bit32u     a20IndexMask; /* mask to apply to phy address */
     } system;
 
+  struct {
+    pic_t    picMaster;
+    pic_t    picSlave;
+    unsigned port0x80;
+    pit_t    pit;
+    unsigned pit_bogus_counter;
+    cmos_t   cmos;
+    vga_t    vga;
+
+    unsigned  cpuToPitRatio;
+    } io;
+
   cpuid_info_t guestCPUIDInfo;
 
 /* This macro yields a physical address after applying the A20 line
@@ -585,6 +598,7 @@ int      hostIoctlRegisterMem(vm_t *vm, plex86IoctlRegisterMem_t *registerMsg);
 void     hostCopyGuestStateToUserSpace(vm_t *vm);
 void     hostReleasePinnedUserPages(vm_t *vm);
 unsigned hostHandlePagePinRequest(vm_t *vm, Bit32u reqPPI);
+void     hostInitLinuxIOEnvironment(vm_t *vm);
 
 /* These are the functions that the host-OS-specific file of the
  * plex86 device driver must define.
@@ -672,6 +686,27 @@ unsigned getMonPTi(vm_t *, unsigned pdi, unsigned source);
 #define STI() __asm__ volatile ("sti": : : "memory")
 
 void doGuestFault(vm_t *, unsigned fault, unsigned errorCode);
+void doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags,
+                      Bit32u errorCode);
+
+
+// ======================
+// IO Function prototypes
+// ======================
+
+extern unsigned  pitInp(vm_t *, unsigned iolen, unsigned port);
+extern void      pitOutp(vm_t *, unsigned iolen, unsigned port, unsigned val);
+extern unsigned  cmosInp(vm_t *, unsigned iolen, unsigned port);
+extern void      cmosOutp(vm_t *, unsigned iolen, unsigned port, unsigned val);
+extern unsigned  vgaInp(vm_t *, unsigned iolen, unsigned port);
+extern void      vgaOutp(vm_t *, unsigned iolen, unsigned port, unsigned val);
+extern void      pitExpireClocks(vm_t *, unsigned pitClocks);
+extern void      picIrq(vm_t *, unsigned irqNum,  unsigned val);
+extern unsigned  picIAC(vm_t *);
+extern unsigned  picInp(vm_t *, unsigned iolen, unsigned port);
+extern void      picServiceMaster(vm_t *);
+extern void      picOutp(vm_t *, unsigned iolen, unsigned port, unsigned val);
+
 
 #endif  /* MONITOR Space. */
 

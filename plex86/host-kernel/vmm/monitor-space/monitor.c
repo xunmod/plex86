@@ -13,41 +13,75 @@
 #define IN_MONITOR_SPACE
 #include "monitor.h"
 
+static inline Bit32u saveEFlagsCLI(void)
+{
+  Bit32u eflags;
+
+  __asm__ volatile (
+    "pushfl \n\t"
+    "popl %0 \n\t"
+    "cli"
+      : "=g" (eflags)
+      : // no inputs
+      : "memory"
+    );
+  return(eflags);
+}
+
+static inline void restoreIF(Bit32u eflags)
+{
+  if ( eflags & FlgMaskIF )
+    __asm__ volatile (
+      "sti"
+      : // no outputs
+      : // no inputs
+      : "memory"
+      );
+}
+
   void
 toHostFlushPrintBuf(vm_t *vm)
 {
-  CLI();
+  Bit32u eflags = saveEFlagsCLI();
+
   vm->mon_request = MonReqFlushPrintBuf;
   vm->guest.__mon2host();
-  STI();
+
+  restoreIF(eflags);
 }
 
   void
 toHostRemapMonitor(vm_t *vm)
 {
-  CLI();
+  Bit32u eflags = saveEFlagsCLI();
+
   vm->mon_request = MonReqRemapMonitor;
   vm->guest.__mon2host();
-  STI();
+
+  restoreIF(eflags);
 }
 
   void
 toHostGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
 {
-  CLI();
+  Bit32u eflags = saveEFlagsCLI();
+
   vm->mon_request = MonReqGuestFault;
   vm->guestFaultNo    = fault;
   vm->guestFaultError = errorCode;
   vm->guest.__mon2host();
-  STI();
+
+  restoreIF(eflags);
 }
 
   void
 toHostPinUserPage(vm_t *vm, Bit32u ppi)
 {
-  CLI();
+  Bit32u eflags = saveEFlagsCLI();
+
   vm->mon_request = MonReqPinUserPage;
   vm->pinReqPPI = ppi;
   vm->guest.__mon2host();
-  STI();
+
+  restoreIF(eflags);
 }

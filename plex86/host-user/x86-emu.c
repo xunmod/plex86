@@ -21,7 +21,6 @@
 #include "linuxvm.h"
 #include "linux-setup.h"
 #include "eflags.h"
-#include "io.h"
 #include "hal.h"
 #include "hal-user.h"
 #include "x86-emu.h"
@@ -69,8 +68,6 @@ static Bit32u    getGuestDWord(Bit32u lAddr);
 static Bit16u    getGuestWord(Bit32u lAddr);
 static void      writeGuestDWord(Bit32u lAddr, Bit32u val);
 static descriptor_t *fetchGuestDescriptor(selector_t);
-static unsigned  inp(unsigned iolen, unsigned port);
-static void      outp(unsigned iolen, unsigned port, unsigned val);
 
 static void      doIRET(void);
 
@@ -299,12 +296,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
               // For now, who cares since the page tables are rebuilt anyways.
               goto advanceInstruction;
               }
-
-            case 0: // SGDT_Ms
-            case 1: // SIDT_Ms
-            case 4:
-            case 5:
-            case 6:
             }
           return 0;
           }
@@ -364,102 +355,11 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       return 1; // OK
       }
 
-    case 0xe4: // IN_ALIb
-      {
-      unsigned port8;
-      Bit8u    al;
-
-      port8 = opcode[iLen++];
-      al = inp(1, port8);
-      plex86GuestCPU->genReg[GenRegEAX] &= ~0xff;
-      plex86GuestCPU->genReg[GenRegEAX] |= al;
-      goto advanceInstruction;
-      }
-
-    case 0xe6: // OUT_IbAL
-      {
-      unsigned port8;
-
-      port8 = opcode[iLen++];
-      outp(1, port8, plex86GuestCPU->genReg[GenRegEAX] & 0xff);
-      goto advanceInstruction;
-      }
-
-    case 0xec: // IN_ALDX
-      {
-      unsigned dx, al;
-
-      dx = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
-      al = inp(1, dx);
-      plex86GuestCPU->genReg[GenRegEAX] &= ~0xff;
-      plex86GuestCPU->genReg[GenRegEAX] |= al;
-      goto advanceInstruction;
-      }
-
-    case 0xee: // OUT_DXAL
-      {
-      unsigned dx, al;
-
-      dx = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
-      al = plex86GuestCPU->genReg[GenRegEAX] & 0xff;
-      outp(1, dx, al);
-      goto advanceInstruction;
-      }
-
-    case 0xef: // OUT_DXeAX
-      {
-      unsigned dx;
-      Bit32u  eax;
-
-      dx  = plex86GuestCPU->genReg[GenRegEDX] & 0xffff;
-      eax = plex86GuestCPU->genReg[GenRegEAX];
-      if ( opsize==0 ) { // 16-bit opsize.
-        eax &= 0xffff;
-        outp(2, dx, eax);
-        }
-      else {
-        outp(4, dx, eax);
-        }
-      goto advanceInstruction;
-      }
-
     case 0xf0: // LOCK (used to make IRET fault).
       {
       if (iLen == 1) // Prevent endless string of prefixes doing overrun.
         goto decodeOpcode;
       return 0;
-      }
-
-    case 0xf4: // HLT
-      {
-      if ( !(plex86GuestCPU->eflags & FlgMaskIF) ) {
-        fprintf(stderr, "HLT with IF==0.\n");
-        return 0;
-        }
-      while (1) {
-        if ( plex86GuestCPU->INTR )
-          break;
-        // Fixme: For now I expire 1 pit clock, which is a good number of
-        // cpu cycles, but nothing is going on anyways.
-        //tsc += cpuToPitRatio;
-        pitExpireClocks( 1 );
-        }
-      goto advanceInstruction;
-      }
-
-    case 0xfb: // STI (PVI triggers this when VIF is asserted.
-      {
-      unsigned vector;
-
-      plex86GuestCPU->eip += iLen; // Commit instruction length.
-      plex86GuestCPU->eflags |= FlgMaskIF;
-      if ( !plex86GuestCPU->INTR ) {
-        fprintf(stderr, "STI: INTR=0?.\n");
-        return 0;
-        }
-      vector = picIAC(); // Get interrupt vector from PIC.
-      doInterrupt(vector, 0, 0);
-      return 1;
       }
 
     default:
@@ -772,91 +672,6 @@ fetchGuestDescriptor(selector_t sel)
     goto error;
     }
   return( gdtEntryPtr );
-
-error:
-  plex86TearDown(); exit(1);
-}
-
-
-  unsigned
-inp(unsigned iolen, unsigned port)
-{
-  switch ( port ) {
-    case 0x21:
-      return( picInp(iolen, port) );
-    case 0x40:
-      return( pitInp(iolen, port) );
-    case 0x61:
-      return( pitInp(iolen, port) );
-
-    case 0x71:
-      return( cmosInp(iolen, port) );
-    case 0x3d5:
-    case 0x3da:
-      return( vgaInp(iolen, port) );
-
-    case 0x30:
-      fprintf(stderr, "inp(0x30) ???\n");
-      goto error;
-      return(0xff);
-
-    default:
-      fprintf(stderr, "inp: port=0x%x unsupported.\n", port);
-      goto error;
-    }
-
-error:
-  plex86TearDown(); exit(1);
-}
-
-  void
-outp(unsigned iolen, unsigned port, unsigned val)
-{
-  //fprintf(stderr, "outp: port=0x%x, val=0x%x\n", port, val);
-  switch ( port ) {
-    case 0x20:
-    case 0x21:
-    case 0xa0:
-    case 0xa1:
-      picOutp( iolen, port, val );
-      return;
-
-    case 0x40:
-    case 0x41:
-    case 0x42:
-    case 0x43:
-      pitOutp(1, port, val);
-      return;
-
-    case 0x61:
-      pitOutp(1, port, val);
-      return;
-
-    case 0x70:
-      cmosOutp(1, port, val);
-      return;
-
-    case 0x80:
-      port0x80 = val;
-      //fprintf(stderr, "Port0x80 = 0x%02x\n", port0x80);
-      return;
-
-    case 0x3c0:
-    case 0x3c8:
-    case 0x3c9:
-    case 0x3d4:
-    case 0x3d5:
-      vgaOutp(1, port, val);
-      return;
-
-    case 0x3f2:
-      fprintf(stderr, "outp(0x%x)=0x%x unsupported.\n", port, val);
-      return;
-
-    default:
-      fprintf(stderr, "outp(0x%x)=0x%x unsupported.\n", port, val);
-      goto error;
-    }
 
 error:
   plex86TearDown(); exit(1);

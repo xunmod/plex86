@@ -131,6 +131,9 @@ hostInitMonitor(vm_t *vm)
   vm->system.a20AddrMask  = 0xffffffff; /* All address lines contribute. */
   vm->system.a20IndexMask = 0x000fffff; /* All address lines contribute. */
 
+  vm->io.cpuToPitRatio = 100;
+  //vm->io.cpuToPitRatio = CPU_CLOCK_FREQ_HZ / PIT_CLOCK_FREQ_HZ;
+
   /* Initialize nexus */
   nexusMemZero(vm->host.addr.nexus, 4096);
 
@@ -810,7 +813,7 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
 
 
     default:
-      hostOSKernelPrint("plex86: unknown ioctl(%d) called\n", cmd);
+      hostOSKernelPrint("plex86: unknown ioctl(%u) called\n", cmd);
       return -Plex86ErrnoEINVAL;
     }
 }
@@ -839,7 +842,8 @@ hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
 
   vm->system.INTR = guest_cpu->INTR;
 
-  if ( vm->mon_request == MonReqFlushPrintBuf ) {
+  if ( (vm->mon_request == MonReqFlushPrintBuf) ||
+       (vm->mon_request == MonReqRedirect) ) {
     /* If the last message sent to user space was a print buffer flush,
      * then the monitor is still executing, and the state is valid.
      * We need to return execution to it, without any guest cpu
@@ -1229,9 +1233,24 @@ executeVMLoop:
 
     /* First check for an asynchronous event (interrupt redirection) */
     if ( vm->mon_request == MonReqRedirect ) {
-      vm_restore_flags(eflags & ~(1<<9)); /* restore all but IF */
+      vm_restore_flags(eflags & ~FlgMaskIF); /* restore all but IF */
       soft_int(vm->redirect_vector); /* sets IF to 1 */
       hostOSInstrumentIntRedirCount(vm->redirect_vector);
+
+#warning "Fixme: hostOSIdle code."
+      /* Let host decide whether we are allowed another timeslice */
+      if ( !hostOSIdle() ) {
+        /* We are returning only because the host wants to
+         * schedule other work.
+         */
+        executeMsg->monitorState.state   = vm->vmState;
+        executeMsg->monitorState.request = vm->mon_request;
+// Fixme: async fields.
+guest_cpu->INTR = vm->system.INTR;
+
+        return 0;
+        }
+
       vm->mon_request = MonReqNone; /* Request satisfied */
       }
 
@@ -1270,10 +1289,14 @@ executeVMLoop:
             vm->host.addr.userLogBuffer[vm->monLogBufferInfo.offset] = 0;
             }
           executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
-          vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
+//vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
           executeMsg->instructionsExecuted = 0; /* Handle later. */
           executeMsg->monitorState.state   = vm->vmState;
           executeMsg->monitorState.request = vm->mon_request;
+#warning "Fixme: copy asynchronous fields here."
+          // Copy asynchronous fields here / hostIoctlExecute() /
+          //   hostCopyGuestStateToUserSpace()
+          guest_cpu->INTR = vm->system.INTR;
           return 0;
 
         case MonReqGuestFault:
@@ -1284,23 +1307,12 @@ executeVMLoop:
 //hostOSKernelPrint("eflags out 1 0x%x", guest_cpu->eflags);
 //hostOSKernelPrint("stack eflags out 1 0x%x", guestStackContext->eflags.raw);
           executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
-          vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
+//vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
           executeMsg->instructionsExecuted = 0; /* Handle later. */
           executeMsg->monitorState.state   = vm->vmState;
           executeMsg->monitorState.request = vm->mon_request;
           executeMsg->monitorState.guestFaultNo = vm->guestFaultNo;
           executeMsg->monitorState.guestFaultError = vm->guestFaultError;
-          vm->mon_request = MonReqNone;
-          return 0;
-
-        case MonReqGuestHWInterrupt:
-          /* INTR set and guest CPU EFLAGS.IF (via VIF) is set. */
-          hostCopyGuestStateToUserSpace(vm);
-          executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
-          vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
-          executeMsg->instructionsExecuted = 0; /* Handle later. */
-          executeMsg->monitorState.state   = vm->vmState;
-          executeMsg->monitorState.request = vm->mon_request;
           vm->mon_request = MonReqNone;
           return 0;
 
@@ -1311,7 +1323,7 @@ executeVMLoop:
           // in the if-then-else in the beginning.
           hostCopyGuestStateToUserSpace(vm);
           executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
-          vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
+//vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
           executeMsg->instructionsExecuted = 0; /* Handle later. */
           executeMsg->monitorState.state   = vm->vmState;
           executeMsg->monitorState.request = vm->mon_request;
@@ -1338,19 +1350,6 @@ executeVMLoop:
           goto handlePanic;
         }
       }
-
-#warning "Fix this hostOSIdle code."
-#if 0
-    /* Let host decide whether we are allowed another timeslice */
-    if ( !hostOSIdle() ) {
-      /* We are returning only because the host wants to
-       * schedule other work.
-       */
-      executeMsg->monitorState.state   = vm->vmState;
-      executeMsg->monitorState.request = MonReqNone;
-      return 0;
-      }
-#endif
     }
 
   /* Should not get here. */
@@ -1540,6 +1539,10 @@ hostIoctlRegisterMem(vm_t *vm, plex86IoctlRegisterMem_t *registerMemMsg)
     hostUnallocVmPages(vm);
     return -Plex86ErrnoEFAULT;
     }
+#warning "Fixme: hostInitLinuxIOEnvironment should depend on linuxVMMode"
+  //if ( vm->linuxVMMode ) {
+    hostInitLinuxIOEnvironment(vm);
+    //}
   return 0;
 }
 
@@ -2047,6 +2050,10 @@ hostHandlePagePinRequest(vm_t *vm, Bit32u reqGuestPPI)
         0 /* There was no host kernel addr mapped for this page. */,
         dirty);
     vm->pageInfo[unpinGuestPPI].attr.fields.pinned = 0;
+#warning "fixme: unpinning page, calling hostInitShadowPaging for now."
+#warning "fixme: do something more intelligent later."
+// Also mods the tsc?
+hostInitShadowPaging(vm);
     }
 
   /* Pin the requested guest physical page in the host OS. */
@@ -2061,13 +2068,14 @@ hostHandlePagePinRequest(vm_t *vm, Bit32u reqGuestPPI)
     }
 
   /* Pinning activities have succeeded.  Mark this physical page as being
-   * pinnned, and store it's physical address.
+   * pinned, and store it's physical address.
    */
   vm->pageInfo[reqGuestPPI].attr.fields.pinned = 1;
   vm->pageInfo[reqGuestPPI].hostPPI = hostPPI;
 
   /* Now add this entry to the Q. */
   vm->guestPhyPagePinQueue.ppi[qIndex] = reqGuestPPI;
+// Fixme: set .tsc field?
 
   if (vm->guestPhyPagePinQueue.nEntries < MaxPhyPagesPinned) {
     vm->guestPhyPagePinQueue.nEntries++;
@@ -2081,4 +2089,51 @@ hostHandlePagePinRequest(vm_t *vm, Bit32u reqGuestPPI)
     }
 
   return(1); /* OK. */
+}
+
+  void
+hostInitLinuxIOEnvironment(vm_t *vm)
+{
+#warning "fixme: memzeros are redundant here"
+  //   no auto-eoi
+  nexusMemZero(&vm->io.picMaster, sizeof(vm->io.picMaster));
+  vm->io.picMaster.imr = 0xff;
+  vm->io.picMaster.vectorOffset = 0x20;
+
+  //   no auto-eoi
+  nexusMemZero(&vm->io.picSlave, sizeof(vm->io.picSlave));
+  vm->io.picSlave.imr = 0xfb; // (irq 9?)
+  vm->io.picSlave.vectorOffset = 0x28;
+
+  // NMI diabled.
+
+  // CMOS
+  nexusMemZero(&vm->io.cmos, sizeof(vm->io.cmos));
+  vm->io.cmos.reg[REG_STAT_A] = 0x26;
+  vm->io.cmos.reg[REG_STAT_B] = 0x02;
+  vm->io.cmos.reg[REG_STAT_C] = 0x00;
+  vm->io.cmos.reg[REG_STAT_D] = 0x80;
+#if 0
+  // Fixme: CMOS FPU bit.  Guest CPUID is not necessary set yet.
+  if (guestCPUID.featureFlags.fields.fpu)
+    cmos.reg[REG_EQUIPMENT_BYTE] |= 0x02; // FPU supported.
+#endif
+  vm->io.cmos.reg[REG_SEC]       = 0;
+  vm->io.cmos.reg[REG_MIN]       = 30;
+  vm->io.cmos.reg[REG_HOUR]      = 10;
+  vm->io.cmos.reg[REG_WEEK_DAY]  = 4;
+  vm->io.cmos.reg[REG_MONTH_DAY] = 0x12;
+  vm->io.cmos.reg[REG_MONTH]     = 1;
+  vm->io.cmos.reg[REG_YEAR]      = 3;
+
+  // PITs.  The state of the 82C54 is undefined after power-up.
+  nexusMemZero(&vm->io.pit, sizeof(vm->io.pit));
+  vm->io.pit.timer[0].GATE = 1; // Tied to + logic.
+  vm->io.pit.timer[0].OUT  = 1;
+  vm->io.pit.timer[1].GATE = 1; // Tied to + logic.
+  vm->io.pit.timer[1].OUT  = 1;
+  vm->io.pit.timer[2].GATE = 1; // Port 0x61 bit0 controls this.
+  vm->io.pit.timer[2].OUT  = 1;
+
+  nexusMemZero(&vm->io.vga, sizeof(vm->io.vga));
 }
