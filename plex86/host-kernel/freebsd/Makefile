@@ -1,14 +1,14 @@
 # FreeBSD Kernel module makefile
 
 SRCS=	freebsd.c host-monitor.c fault.c monitor.c paging.c panic.c print.c \
-	x86-emu.c util-nexus.c
+	x86-emu.c util-nexus.c io.c
 OBJS=	nexus.o
 
 KMOD=	plex86
 NOMAN=	yes
 CFLAGS+=	-I../include -I../../include
 CLEANFILES+=	host-monitor.c fault.c monitor.c paging.c panic.c print.c \
-		x86-emu.c util-nexus.c nexus.S
+		x86-emu.c util-nexus.c nexus.S io.c
 
 nexus.o: nexus.S
 	${CC} -c -x assembler-with-cpp ${CFLAGS} ${.IMPSRC} -o ${.TARGET}
@@ -16,7 +16,7 @@ nexus.o: nexus.S
 host-monitor.c:
 	ln -s ${.CURDIR}/../vmm/host-space/monitor.c host-monitor.c
 
-fault.c monitor.c paging.c panic.c print.c x86-emu.c:
+fault.c monitor.c paging.c panic.c print.c x86-emu.c io.c:
 	ln -s ${.CURDIR}/../vmm/monitor-space/${.TARGET} ${.TARGET}
 
 nexus.S util-nexus.c:
