@@ -4,12 +4,12 @@
  *  plex86: run multiple x86 operating systems concurrently
  *  Copyright (C) 1999-2003 Kevin P. Lawton
  *
- *  guest_context.h: monitor stack frame after exception/interrupt
+ *  guest_stack_context.h: monitor stack frame after exception/interrupt
  *
  */
 
-#ifndef __GUEST_CONTEXT_H__
-#define __GUEST_CONTEXT_H__
+#ifndef __GUEST_STACK_CONTEXT_H__
+#define __GUEST_STACK_CONTEXT_H__
 
 #include "eflags.h"
 
@@ -43,6 +43,6 @@ typedef struct {
   eflags_t  eflags;
   Bit32u  esp;
   Bit32u  ss;
-  } guest_context_t;
+  } guestStackContext_t;
 
 #endif  /* __GUEST_CONTEXT_H__ */

@@ -14,7 +14,6 @@
 //   Updating segment descriptor A bits upon descriptor load.
 //   Clean assertRF passed to doGuestInterrupt()
 //   Check that all uses of translateLinToPhy() check for LinAddrNotAvailable
-//   Change guest_context_t to guestStackContext_t
 //   Make sure that linear accesses modify guest page table A&D bits properly.
 
 
@@ -31,7 +30,7 @@
 #define MSR_IA32_SYSENTER_ESP   0x175
 #define MSR_IA32_SYSENTER_EIP   0x176
 
-#define EIP vm->guest.addr.guest_context->eip
+#define EIP vm->guest.addr.guestStackContext->eip
 #define CPL vm->guestCPL
 
 typedef struct {
@@ -113,9 +112,9 @@ static const phyAddr_t LinAddrNotAvailable = -1;
   void
 doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
 {
-  guest_context_t *guestStackContext;
+  guestStackContext_t *guestStackContext;
 
-  guestStackContext = vm->guest.addr.guest_context;
+  guestStackContext = vm->guest.addr.guestStackContext;
 
   switch (fault) {
 
@@ -1341,13 +1340,13 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
   Bit32u esp;
   Bit32u oldEFlags;
   guest_cpu_t *guestCpu;
-  guest_context_t *guestStackContext;
+  guestStackContext_t *guestStackContext;
   unsigned fromCPL;
   nexus_t *nexus;
   Bit32u newCR4;
 
   guestCpu          = vm->guest.addr.guest_cpu;
-  guestStackContext = vm->guest.addr.guest_context;
+  guestStackContext = vm->guest.addr.guestStackContext;
   nexus             = vm->guest.addr.nexus;
   fromCPL = CPL;
 

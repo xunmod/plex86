@@ -147,8 +147,8 @@ hostInitMonitor(vm_t *vm)
   vm->host.__host2mon = (void (*)(void)) HOST_NEXUS_OFFSET(vm, __host2mon);
 
   /* Pointer to guest context on monitor stack */
-  vm->host.addr.guest_context = (guest_context_t *)
-    ( (Bit32u)vm->host.addr.nexus + PAGESIZE - sizeof(guest_context_t) );
+  vm->host.addr.guestStackContext = (guestStackContext_t *)
+    ( (Bit32u)vm->host.addr.nexus + PAGESIZE - sizeof(guestStackContext_t) );
 
   /* Zero out various monitor data structures */
   nexusMemZero(vm->host.addr.userLogBuffer, 4096*LOG_BUFF_PAGES);
@@ -221,8 +221,8 @@ hostInitMonitor(vm_t *vm)
 
   vm->guest.addr.nexus = (nexus_t *) (laddr - base);
   hostMapMonPages(vm, &vm->pages.nexus, 1, &laddr, pageTable, US0, RW1, "Nexus");
-  vm->guest.addr.guest_context = (guest_context_t *)
-    ( (Bit32u)vm->guest.addr.nexus + PAGESIZE - sizeof(guest_context_t) );
+  vm->guest.addr.guestStackContext = (guestStackContext_t *)
+    ( (Bit32u)vm->guest.addr.nexus + PAGESIZE - sizeof(guestStackContext_t) );
 
 #if ANAL_CHECKS
   hostMapBlankPage(vm, &laddr, pageTable);
@@ -459,7 +459,7 @@ hostInitMonitor(vm_t *vm)
 
   vm->host.addr.nexus->mon_jmp_info.offset   = MON_NEXUS_OFFSET(vm, __mon_cs);
   vm->host.addr.nexus->mon_stack_info.offset =
-      vm->host.addr.tss->esp0 - (sizeof(guest_context_t) + 48);
+      vm->host.addr.tss->esp0 - (sizeof(guestStackContext_t) + 48);
 /* xxx 48 above should be calculated from code below which winds
  * xxx up monitor stack.
  */
@@ -505,7 +505,7 @@ hostInitMonitor(vm_t *vm)
    *  Setup the initial guest context
    */
 
-  nexusMemZero(vm->host.addr.guest_context, sizeof(guest_context_t));
+  nexusMemZero(vm->host.addr.guestStackContext, sizeof(guestStackContext_t));
 
   /* Wind up the monitor stack for the initial transition via
    * __host2mon.  At the tail end, monitor state is popped from the
@@ -514,7 +514,7 @@ hostInitMonitor(vm_t *vm)
   {
   Bit32u *ptr;
 
-  ptr = (Bit32u *) (((unsigned char *) vm->host.addr.guest_context) - 4);
+  ptr = (Bit32u *) (((unsigned char *) vm->host.addr.guestStackContext) - 4);
   *ptr-- = (Bit32u) &__ret_to_guest;
   *ptr-- = 0x02; /* eflags: only reserved bit on */
   *ptr-- = 0; /* eax */
@@ -819,7 +819,7 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
 hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
 {
   guest_cpu_t     *guest_cpu;
-  guest_context_t *guest_stack_context;
+  guestStackContext_t *guestStackContext;
   nexus_t *nexus;
   unsigned s;
   int retval;
@@ -835,7 +835,7 @@ hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
   guest_cpu = vm->host.addr.guest_cpu;
 
   /* A pointer to the guest CPU state saved on the monitor stack. */
-  guest_stack_context =  vm->host.addr.guest_context;
+  guestStackContext =  vm->host.addr.guestStackContext;
 
   vm->system.INTR = guest_cpu->INTR;
 
@@ -1099,51 +1099,51 @@ handleFailSegReg:
 
   if ( vm->guestCPL==0 ) {
     /* For running guest kernel code, push privilege down to user. */
-    guest_stack_context->gs = guest_cpu->sreg[SRegGS].sel.raw | 3;
-    guest_stack_context->fs = guest_cpu->sreg[SRegFS].sel.raw | 3;
-    guest_stack_context->ds = guest_cpu->sreg[SRegDS].sel.raw | 3;
-    guest_stack_context->es = guest_cpu->sreg[SRegES].sel.raw | 3;
-    guest_stack_context->cs = guest_cpu->sreg[SRegCS].sel.raw | 3;
-    guest_stack_context->ss = guest_cpu->sreg[SRegSS].sel.raw | 3;
+    guestStackContext->gs = guest_cpu->sreg[SRegGS].sel.raw | 3;
+    guestStackContext->fs = guest_cpu->sreg[SRegFS].sel.raw | 3;
+    guestStackContext->ds = guest_cpu->sreg[SRegDS].sel.raw | 3;
+    guestStackContext->es = guest_cpu->sreg[SRegES].sel.raw | 3;
+    guestStackContext->cs = guest_cpu->sreg[SRegCS].sel.raw | 3;
+    guestStackContext->ss = guest_cpu->sreg[SRegSS].sel.raw | 3;
     }
   else {
-    guest_stack_context->gs = guest_cpu->sreg[SRegGS].sel.raw;
-    guest_stack_context->fs = guest_cpu->sreg[SRegFS].sel.raw;
-    guest_stack_context->ds = guest_cpu->sreg[SRegDS].sel.raw;
-    guest_stack_context->es = guest_cpu->sreg[SRegES].sel.raw;
-    guest_stack_context->cs = guest_cpu->sreg[SRegCS].sel.raw;
-    guest_stack_context->ss = guest_cpu->sreg[SRegSS].sel.raw;
+    guestStackContext->gs = guest_cpu->sreg[SRegGS].sel.raw;
+    guestStackContext->fs = guest_cpu->sreg[SRegFS].sel.raw;
+    guestStackContext->ds = guest_cpu->sreg[SRegDS].sel.raw;
+    guestStackContext->es = guest_cpu->sreg[SRegES].sel.raw;
+    guestStackContext->cs = guest_cpu->sreg[SRegCS].sel.raw;
+    guestStackContext->ss = guest_cpu->sreg[SRegSS].sel.raw;
     }
 
   /* Could use memcpy(); both are in order.  Pack both structs. */
-  guest_stack_context->edi = guest_cpu->genReg[GenRegEDI];
-  guest_stack_context->esi = guest_cpu->genReg[GenRegESI];
-  guest_stack_context->ebp = guest_cpu->genReg[GenRegEBP];
-  guest_stack_context->dummy_esp = 0; /* Not needed. */
-  guest_stack_context->ebx = guest_cpu->genReg[GenRegEBX];
-  guest_stack_context->edx = guest_cpu->genReg[GenRegEDX];
-  guest_stack_context->ecx = guest_cpu->genReg[GenRegECX];
-  guest_stack_context->eax = guest_cpu->genReg[GenRegEAX];
+  guestStackContext->edi = guest_cpu->genReg[GenRegEDI];
+  guestStackContext->esi = guest_cpu->genReg[GenRegESI];
+  guestStackContext->ebp = guest_cpu->genReg[GenRegEBP];
+  guestStackContext->dummy_esp = 0; /* Not needed. */
+  guestStackContext->ebx = guest_cpu->genReg[GenRegEBX];
+  guestStackContext->edx = guest_cpu->genReg[GenRegEDX];
+  guestStackContext->ecx = guest_cpu->genReg[GenRegECX];
+  guestStackContext->eax = guest_cpu->genReg[GenRegEAX];
 
   /* Fields vector/error are ignored for return to guest. */
 
   /* CS:EIP */
-  guest_stack_context->eip = guest_cpu->eip;
+  guestStackContext->eip = guest_cpu->eip;
 
   /* Pointer to the fields in the nexus.S assembly code. */
   nexus = vm->host.addr.nexus;
 
 
-  guest_stack_context->eflags.raw = guest_cpu->eflags;
-  guest_stack_context->eflags.raw |= (1<<9); /* Set IF. */
+  guestStackContext->eflags.raw = guest_cpu->eflags;
+  guestStackContext->eflags.raw |= (1<<9); /* Set IF. */
 //hostOSKernelPrint("eflags in 0 0x%x", guest_cpu->eflags);
-//hostOSKernelPrint("stack eflags in 0 0x%x", guest_stack_context->eflags.raw);
+//hostOSKernelPrint("stack eflags in 0 0x%x", guestStackContext->eflags.raw);
   if ( vm->linuxVMMode && (vm->guestCPL==0) ) {
     /* Running Linux VM kernel code.  We use PVI to manage EFLAGS.IF.
      * VIF is set to the guest EFLAGS.IF requested value.
      */
     if ( guest_cpu->eflags & (1<<9) ) /* Guest requested IF=1. */
-      guest_stack_context->eflags.raw |= (1<<19); /* Set VIF. */
+      guestStackContext->eflags.raw |= (1<<19); /* Set VIF. */
     nexus->mon_cr4 = 0x00000002; /* TSD=0,PVI=1. */
     }
   else {
@@ -1151,7 +1151,7 @@ handleFailSegReg:
     }
   vm->veflags.raw = 0; /* Virtualized EFLAGS - implement later. */
 
-  guest_stack_context->esp = guest_cpu->genReg[GenRegESP];
+  guestStackContext->esp = guest_cpu->genReg[GenRegESP];
 
 #warning "Monitor CRx hacks"
   nexus->mon_cr0 = 0x8001003b | /* PG/WP/NE/ET/TS/MP/PE */
@@ -1279,10 +1279,10 @@ executeVMLoop:
         case MonReqGuestFault:
           /* Encountered a guest fault. */
 //hostOSKernelPrint("eflags out 0 0x%x", guest_cpu->eflags);
-//hostOSKernelPrint("stack eflags out 0 0x%x", guest_stack_context->eflags.raw);
+//hostOSKernelPrint("stack eflags out 0 0x%x", guestStackContext->eflags.raw);
           hostCopyGuestStateToUserSpace(vm);
 //hostOSKernelPrint("eflags out 1 0x%x", guest_cpu->eflags);
-//hostOSKernelPrint("stack eflags out 1 0x%x", guest_stack_context->eflags.raw);
+//hostOSKernelPrint("stack eflags out 1 0x%x", guestStackContext->eflags.raw);
           executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
           vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
           executeMsg->instructionsExecuted = 0; /* Handle later. */
@@ -1375,7 +1375,7 @@ handlePanic:
 hostCopyGuestStateToUserSpace(vm_t *vm)
 {
   guest_cpu_t     *guest_cpu;
-  guest_context_t *guest_stack_context;
+  guestStackContext_t *guestStackContext;
   Bit32u *stackSelectorPtr[6];
   unsigned s;
 
@@ -1385,16 +1385,16 @@ hostCopyGuestStateToUserSpace(vm_t *vm)
   guest_cpu = vm->host.addr.guest_cpu;
 
   /* A pointer to the guest CPU state saved on the monitor stack. */
-  guest_stack_context =  vm->host.addr.guest_context;
+  guestStackContext =  vm->host.addr.guestStackContext;
 
   guest_cpu->INTR = vm->system.INTR;
 
-  stackSelectorPtr[SRegES] = &guest_stack_context->es;
-  stackSelectorPtr[SRegCS] = &guest_stack_context->cs;
-  stackSelectorPtr[SRegSS] = &guest_stack_context->ss;
-  stackSelectorPtr[SRegDS] = &guest_stack_context->ds;
-  stackSelectorPtr[SRegFS] = &guest_stack_context->fs;
-  stackSelectorPtr[SRegGS] = &guest_stack_context->gs;
+  stackSelectorPtr[SRegES] = &guestStackContext->es;
+  stackSelectorPtr[SRegCS] = &guestStackContext->cs;
+  stackSelectorPtr[SRegSS] = &guestStackContext->ss;
+  stackSelectorPtr[SRegDS] = &guestStackContext->ds;
+  stackSelectorPtr[SRegFS] = &guestStackContext->fs;
+  stackSelectorPtr[SRegGS] = &guestStackContext->gs;
 
   for (s=0; s<6; s++) {
     Bit32u sel = *stackSelectorPtr[s];
@@ -1419,36 +1419,36 @@ hostCopyGuestStateToUserSpace(vm_t *vm)
     }
 
   /* Fixme: Could use memcpy(); both are in order.  Pack both structs. */
-  guest_cpu->genReg[GenRegEDI] = guest_stack_context->edi;
-  guest_cpu->genReg[GenRegESI] = guest_stack_context->esi;
-  guest_cpu->genReg[GenRegEBP] = guest_stack_context->ebp;
-  guest_cpu->genReg[GenRegESP] = guest_stack_context->esp;
-  guest_cpu->genReg[GenRegEBX] = guest_stack_context->ebx;
-  guest_cpu->genReg[GenRegEDX] = guest_stack_context->edx;
-  guest_cpu->genReg[GenRegECX] = guest_stack_context->ecx;
-  guest_cpu->genReg[GenRegEAX] = guest_stack_context->eax;
+  guest_cpu->genReg[GenRegEDI] = guestStackContext->edi;
+  guest_cpu->genReg[GenRegESI] = guestStackContext->esi;
+  guest_cpu->genReg[GenRegEBP] = guestStackContext->ebp;
+  guest_cpu->genReg[GenRegESP] = guestStackContext->esp;
+  guest_cpu->genReg[GenRegEBX] = guestStackContext->ebx;
+  guest_cpu->genReg[GenRegEDX] = guestStackContext->edx;
+  guest_cpu->genReg[GenRegECX] = guestStackContext->ecx;
+  guest_cpu->genReg[GenRegEAX] = guestStackContext->eax;
 
   /* CS:EIP */
-  guest_cpu->eip = guest_stack_context->eip;
+  guest_cpu->eip = guestStackContext->eip;
 
   if ( vm->linuxVMMode && (vm->guestCPL==0) ) {
 
 #warning "Remove this DEBUG code."
-//if (guest_stack_context->eflags.raw & (1<<19))
+//if (guestStackContext->eflags.raw & (1<<19))
 //hostOSKernelPrint("Guest.VIF=1");
 
-    if (guest_stack_context->eflags.raw & (1<<19)) {
+    if (guestStackContext->eflags.raw & (1<<19)) {
       /* VIF is set.  Clear VIF in guest eflags image and set IF. */
-      guest_cpu->eflags = (guest_stack_context->eflags.raw | (1<<9)) &
+      guest_cpu->eflags = (guestStackContext->eflags.raw | (1<<9)) &
                           ~(1<<19);
       }
     else {
       /* VIF is clear.  Clear IF in guest eflags image. */
-      guest_cpu->eflags = guest_stack_context->eflags.raw & ~(1<<9);
+      guest_cpu->eflags = guestStackContext->eflags.raw & ~(1<<9);
       }
     }
   else {
-    guest_cpu->eflags = guest_stack_context->eflags.raw;
+    guest_cpu->eflags = guestStackContext->eflags.raw;
     }
   /* vm->veflags.raw = 0; */ /* Virtualized EFLAGS - implement later. */
 }
@@ -1851,12 +1851,10 @@ hostMapMonitor(vm_t *vm)
   selector_t monCsSel, monSsSel, monTssSel;
   Bit32u laddr, base;
   unsigned slot;
-  guest_context_t *guestContext;
   nexus_t *nexus;
   descriptor_t *gdt;
 
   /* For convenience, some pointers. */
-  guestContext = vm->host.addr.guest_context;
   nexus        = vm->host.addr.nexus;
   gdt          = vm->host.addr.gdt;
 

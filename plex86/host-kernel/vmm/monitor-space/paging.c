@@ -502,7 +502,7 @@ access_exception:
 
 
   void
-guestPageFault(vm_t *vm, guest_context_t *context, Bit32u cr2)
+guestPageFault(vm_t *vm, guestStackContext_t *context, Bit32u cr2)
 {
   Bit32u   guest_ppi, error, gerror;
   unsigned us, rw;

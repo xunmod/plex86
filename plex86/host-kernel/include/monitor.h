@@ -23,7 +23,7 @@
 #include "tss.h"
 #include "paging.h"
 #include "eflags.h"
-#include "guest_context.h"
+#include "guest_stack_context.h"
 
 #ifndef UNUSED
 #  define UNUSED(x) ((void)(x))
@@ -248,7 +248,7 @@ typedef struct {
   nexus_t      *nexus;
   /* Pointer into the monitor stack, so we can easily retrieve the */
   /* stack snapshot upon interrupt/exception. */
-  guest_context_t *guest_context;
+  guestStackContext_t *guestStackContext;
   gate_t       *idt;
   descriptor_t *gdt;
   descriptor_t *ldt;
@@ -636,7 +636,7 @@ void monpanic_nomess(vm_t *);
 void toHostGuestFault(vm_t *, unsigned fault, unsigned errorCode);
 void toHostPinUserPage(vm_t *, Bit32u ppi);
 
-void guestPageFault(vm_t *, guest_context_t *context, Bit32u cr2);
+void guestPageFault(vm_t *, guestStackContext_t *context, Bit32u cr2);
 void *open_guest_phy_page(vm_t *, Bit32u ppage_index, Bit8u *mon_offset);
 void close_guest_phy_page(vm_t *, Bit32u ppage_index);
 

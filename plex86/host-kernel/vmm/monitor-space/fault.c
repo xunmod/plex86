@@ -45,7 +45,7 @@
  * gs
  */
 
-void handleMonFault(guest_context_t *monContext);
+void handleMonFault(guestStackContext_t *monContext);
 
   static inline
 Bit32u readCR2(void)
@@ -143,7 +143,7 @@ asm (
 
 
   unsigned
-handleInt(guest_context_t *context)
+handleInt(guestStackContext_t *context)
 /*
  * handleInt(): Redirect a hardware interrupt back to the host
  */
@@ -183,7 +183,7 @@ handleInt(guest_context_t *context)
    */
 
   void
-preGuest(guest_context_t *context)
+preGuest(guestStackContext_t *context)
 {
   nexus_t *nexus = (nexus_t *) (((Bit32u) context) & 0xfffff000);
   vm_t    *vm    = (vm_t *) nexus->vm;
@@ -212,7 +212,7 @@ preGuest(guest_context_t *context)
 
 
   void
-handleGuestFault(guest_context_t *context)
+handleGuestFault(guestStackContext_t *context)
 /*  Handle a fault from the guest.  Called from the assembly stub
  *  __handle_fault.
  */
@@ -297,7 +297,7 @@ monpanic(vm, "handleGuestFault: NP/SS/AC unfinished.\n");
 }
 
   void
-handleMonFault(guest_context_t *monContext)
+handleMonFault(guestStackContext_t *monContext)
 {
   nexus_t *nexus = (nexus_t *) (((Bit32u) monContext) & 0xfffff000);
   vm_t    *vm    = (vm_t *) nexus->vm;
