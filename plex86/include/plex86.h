@@ -261,6 +261,7 @@ typedef Bit32u phyAddr_t;
 #define MonReqPanic             8
 #define MonReqHalCall           9
 #define MonReqCyclesUpdate     10
+#define MonReqBogus            11 // Fixme
 
 #define VMStateFDOpened               0x001
 #define VMStateMemAllocated           0x002

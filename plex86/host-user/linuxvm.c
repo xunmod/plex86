@@ -850,6 +850,13 @@ executeLoop:
         fprintf(stderr, "::%s\n", plex86PrintBuffer);
         break;
 
+      case MonReqBogus:
+        // I put this message in here as a way for the monitor to
+        // give this loop an opportunity to execute so it can service
+        // async HAL events.
+        goto executeLoop;
+        break;
+
       default:
         fprintf(stderr, "plex86: executeMsg.request = %u\n",
                 executeMsg.monitorState.request);
