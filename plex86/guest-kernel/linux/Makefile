@@ -25,14 +25,14 @@ defs := -D__KERNEL__ -DMODULE
 GUEST_KERNEL_CFLAGS := -I$(GUEST_LINUX_SRC)/include $(defs) \
   $(GUEST_KERNEL_CFLAGS) $(forceh) $(machdef) -iwithprefix include -nostdinc
 INC_DIRS := -I../../include -I../include
-MODULE_NAME := halnet
+DRIVER_NAMES := halnet halconsole
 OBJS := halnet.o
 
 
 .c.o:
 	$(GUEST_KERNEL_CC) -c $(GUEST_KERNEL_CFLAGS) $(INC_DIRS) $<
 
-drivers: halnet halconsole
+drivers: $(DRIVER_NAMES)
 
 halnet: $(OBJS)
 	/bin/rm -f $@
@@ -43,6 +43,6 @@ halconsole: halconsole.o
 	$(LD) -r -o $@ $^
 
 clean:
-	@/bin/rm -f *.o *.s $(MODULE_NAME)
+	@/bin/rm -f *.o *.s $(DRIVER_NAMES)
 
 dist-clean: clean
