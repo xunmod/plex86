@@ -1,0 +1,25 @@
+                           VERSIONS
+       Plex86 versions & features list (past/present/future).
+
+
+v0_1: Released (TBD)
+
+  hosts=Linux 2.4.20, FreeBSD(no TUN/TAP)
+  guests=Linux 2.4.20, (Linux 2.5.59: need to recompile plex86)
+
+  Notes:
+
+  o Networking uses the TUN/TAP interface to attach the guest
+    to the host network.  Thus network packets travel a long way
+    from the guest to the recipient host user process (like the
+    X server).  A one-way trip would look like:
+
+      guest -> VM monitor -> host-kernel -> host-user -> (TUN/TAP) ->
+      host-kernel -> X server.
+
+    Ultimately, packets should be shuttled to/from the host kernel
+    networking subsystem.  But TUN/TAP is a great interface at this
+    stage of development.
+
+  o The FreeBSD port doesn't use TUN/TAP, and can only boot the
+    Linux kernel.  There's no place to send network packets to yet.
