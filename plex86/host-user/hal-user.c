@@ -28,7 +28,7 @@
 #include "hal.h"
 #include "hal-user.h"
 
-static Bit8u *halDiskMem[HalDiskMaxDisks]; // Fixme: remove this.
+static int halDiskFileNo[HalDiskMaxDisks];
 
 //#define TUNTAP_SPEW 1
 
@@ -331,6 +331,7 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
       {
       unsigned infoPAddr, unit;
       halDiskInfo_t *halDiskInfo;
+char pathName[HalDiskMaxDisks][64];
 
       infoPAddr   = plex86GuestCPU->genReg[GenRegEBX];
       if ( infoPAddr >= (plex86MemSize - sizeof(halDiskInfo_t)) ) {
@@ -348,11 +349,17 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
           halDiskInfo[unit].geom.spt = 16;
           halDiskInfo[unit].geom.start = 4;
           halDiskInfo[unit].geom.numSectors = sectors;
-halDiskMem[unit] = malloc(sectors << 9);
+sprintf(pathName[unit], "%s%u", "/tmp/hald", unit);
+halDiskFileNo[unit] = open(pathName[unit], O_RDWR, 0);
+if (halDiskFileNo[unit] < 0) {
+  fprintf(stderr, "HalCallDiskGetInfo: could not open file '%s'.\n",
+          pathName[unit]);
+  goto error;
+  }
           }
         else {
           memset(&halDiskInfo[unit], 0, sizeof(halDiskInfo_t));
-halDiskMem[unit] = 0;
+halDiskFileNo[unit] = -1;
           }
         }
       return;
@@ -376,7 +383,14 @@ halDiskMem[unit] = 0;
         }
 // Fixme: other checks here.
       rwArea = (Bit8u *) &plex86MemPtr[bufferPAddr];
-      memcpy(&halDiskMem[sector<<9], rwArea, 512);
+if ( lseek(halDiskFileNo[unit], sector<<9, SEEK_SET) < 0 ) {
+  fprintf(stderr, "HalCallDiskWrite: lseek() failed.\n");
+  goto error;
+  }
+if ( write(halDiskFileNo[unit], rwArea, 512) != 512 ) {
+  fprintf(stderr, "HalCallDiskWrite: write() failed.\n");
+  goto error;
+  }
 
       // Result goes in EAX
       plex86GuestCPU->genReg[GenRegEAX] = 1; // OK.
@@ -391,17 +405,24 @@ halDiskMem[unit] = 0;
       Bit8u *rwArea;
 
       if ( bufferPAddr >= (plex86MemSize - 512) ) {
-        fprintf(stderr, "HalCallDiskWrite: bufferPAddr(0x%x) past "
+        fprintf(stderr, "HalCallDiskRead: bufferPAddr(0x%x) past "
                         "guest physical memory limit.\n", bufferPAddr);
         goto error;
         }
       if ( unit >= HalDiskMaxDisks ) {
-        fprintf(stderr, "HalCallDiskWrite: unit(%u) OOB.\n", unit);
+        fprintf(stderr, "HalCallDiskRead: unit(%u) OOB.\n", unit);
         goto error;
         }
 // Fixme: other checks here.
       rwArea = (Bit8u *) &plex86MemPtr[bufferPAddr];
-      memcpy(rwArea, &halDiskMem[sector<<9], 512);
+if ( lseek(halDiskFileNo[unit], sector<<9, SEEK_SET) < 0 ) {
+  fprintf(stderr, "HalCallDiskRead: lseek() failed.\n");
+  goto error;
+  }
+if ( read(halDiskFileNo[unit], rwArea, 512) != 512 ) {
+  fprintf(stderr, "HalCallDiskRead: read() failed.\n");
+  goto error;
+  }
 
       // Result goes in EAX
       plex86GuestCPU->genReg[GenRegEAX] = 1; // OK.
@@ -413,8 +434,8 @@ halDiskMem[unit] = 0;
       unsigned unit;
 
       for (unit=0; unit<HalDiskMaxDisks; unit++) {
-        if ( halDiskMem[unit] )
-          free( halDiskMem[unit] );
+if ( halDiskFileNo[unit] >= 0 )
+  close( halDiskFileNo[unit] );
         }
       return;
       }
