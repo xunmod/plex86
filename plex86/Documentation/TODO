@@ -4,6 +4,13 @@ TODO
 Some random todos and thoughts I had while implementing plex86.
 Some may be old and irrelevant.
 
+Add dependencies to Makefiles.
+
+Handle floating point / SIMD.
+  Save/restore floating point state of host/VM.
+  Don't put CR0 in emulation mode (kernel needs FPU emulation
+    compiled in and emulates floating point for now).
+
 Handle HLT more intelligently w.r.t. host cpu load.
 
 Can speculate3
@@ -35,8 +42,6 @@ GDT entries for guest need to be cleared upon return from guest
   execution, or just cleared before invocation of the guest.
 
 Task segment must be a 32-bit'er.
-
-Save/restore floating point state of host/VM.
 
 deduct off some cycles for the IRET/int sequence.
 

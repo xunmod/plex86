@@ -31,7 +31,7 @@
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,4,0)
-#  error "Your kernel is not 2.4 or greater."
+#  error "Your guest kernel is not 2.4 or greater."
 #endif
 
 #include <linux/vmalloc.h>

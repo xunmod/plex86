@@ -35,7 +35,7 @@ defs := -D__KERNEL__ -DMODULE
 GUEST_KERNEL_CFLAGS := -I$(GUEST_LINUX_SRC)/include $(defs) \
   $(GUEST_KERNEL_CFLAGS) $(forceh) $(machdef) -iwithprefix include -nostdinc
 INC_DIRS := -I../../include -I../include
-DRIVER_NAMES := halnet halconsole
+DRIVER_NAMES := halnet halconsole haldisk
 OBJS := halnet.o
 
 SETUP32_LDFLAGS = -nostartfiles -nostdlib -Wl,-Ttext,0x90000
@@ -64,6 +64,10 @@ halnet: $(OBJS)
 	$(LD) -r -o $@ $^
 
 halconsole: halconsole.o
+	/bin/rm -f $@
+	$(LD) -r -o $@ $^
+
+haldisk: haldisk.o
 	/bin/rm -f $@
 	$(LD) -r -o $@ $^
 
