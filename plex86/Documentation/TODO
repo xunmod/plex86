@@ -4,6 +4,8 @@ TODO
 Some random todos and thoughts I had while implementing plex86.
 Some may be old and irrelevant.
 
+Handle HLT more intelligently w.r.t. host cpu load.
+
 Can speculate3
 hostOSPrint() should be passed a severity level which can
   be translated to printk()?
