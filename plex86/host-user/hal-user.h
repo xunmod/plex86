@@ -14,7 +14,7 @@
   v; \
   })
 
-extern unsigned initHal(void);
+extern unsigned initHal(char *tunScript);
 extern void halCall(void);
 extern unsigned tuntapReadPacketToGuest(unsigned deviceNo);
 

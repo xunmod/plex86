@@ -132,6 +132,8 @@ static unsigned char initrdImagePathname[NAME_MAX];
 static phyAddr_t initrdImageLoadAddr = 0; // Signal no initrd.
 static phyAddr_t initrdImageSize=0;
 
+static unsigned char tunscriptPathname[NAME_MAX];
+
 static unsigned char kernelCommandLine[KernelCommandLineMax];
 
 static unsigned      plex86State = 0;
@@ -190,6 +192,9 @@ if ( sizeof(descriptor_t) != 8 ) {
   nMegs = 0;
   linuxImagePathname[0] = 0;
   initrdImagePathname[0] = 0;
+  tunscriptPathname[0] = 0;
+  kernelCommandLine[0] = 0;
+  memset( &faultCount, 0, sizeof(faultCount) );
 
   /* Process command line. */
   while (argi < argc) {
@@ -227,6 +232,12 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
       argi += 1;
       vgaDump = 1;
       }
+    else if ( !strcmp(argv[argi], "-tun-script") ) {
+      CheckArgsForParameter(1);
+      strncpy(tunscriptPathname, argv[argi+1], NAME_MAX-1);
+      tunscriptPathname[NAME_MAX-1] = 0; /* Make damn sure string ends. */
+      argi += 2;
+      }
     else {
       goto errorArgUnrecognized;
       }
@@ -253,6 +264,10 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
   if (initrdImageLoadAddr >= plex86MemSize) {
     fprintf(stderr, "initrd image load address of 0x%x beyond physical memory.\n",
             initrdImageLoadAddr);
+    }
+  if ( tunscriptPathname[0] == 0 ) {
+    fprintf(stderr, "Note: you can specify a script to configure the tuntap "
+                    "interface using -tun-script.\n");
     }
 
   // Allocate guest machine physical memory.
@@ -349,7 +364,7 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
   initLinuxIOenvironment();
   initLinuxCPUMemenvironment();
 
-  if ( initHal() == 0 ) {
+  if ( initHal( tunscriptPathname ) == 0 ) {
     (void) plex86TearDown();
     return(1); // Error.
     }

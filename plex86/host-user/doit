@@ -16,3 +16,5 @@
     "root=/dev/ram0 ramdisk_size=6144 init=/linuxrc mem=nopentium bogomips=989 rw"
 
 #  -dump-vga \
+#  -tun-script ../misc/tuntap-sample-script \
+

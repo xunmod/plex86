@@ -1,0 +1,28 @@
+#!/bin/bash
+
+if [ $# != 1 ] ; then
+  exit 1
+fi
+
+
+# Setup network interface parameters for tun/tap device,
+# usually named tun0, tun1, ...  My /etc/hosts entry looks like:
+#
+# 192.168.10.1    host-vmnet
+
+/sbin/ifconfig $1 hw ether 00:FF:84:8E:94:31 host-vmnet
+if [ $? != 0 ] ; then
+  exit 1
+fi
+
+
+# Load entries in the ARP cache.  My /etc/ethers looks like this:
+#
+# 0:53:4e:55:4c:30 guest-vmnet
+
+arp -f /etc/ethers
+if [ $? != 0 ] ; then
+  exit 1
+fi
+
+exit 0

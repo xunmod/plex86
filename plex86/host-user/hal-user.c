@@ -21,6 +21,7 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <sys/wait.h>
 
 #include "plex86.h"
 #include "linuxvm.h"
@@ -35,9 +36,9 @@
 #define HalNet0Irq 3
 
 
-static unsigned initTunTap(void);
+static unsigned initTunTap(char *tunScript);
 static void tuntapDev0SigIO(int sig);
-
+static int execute_script(char *name, char* arg1);
 
 //static int bridge_term = 0;
 int fdTunTap = -1;
@@ -76,10 +77,10 @@ static unsigned char halConLine[LineLen+2];
 static unsigned      halConLineI = 0;
 
   unsigned
-initHal(void)
+initHal(char *tunScript)
 {
   memset( &halNetDev[0], 0, sizeof(halNetDev) );
-  return( initTunTap() );
+  return( initTunTap( tunScript ) );
 }
 
   void
@@ -338,8 +339,38 @@ tuntapDev0SigIO(int sig)
     }
 }
 
+  int
+execute_script( char* scriptname, char* arg1 )
+{
+  int childPID, waitPID, status;
+  int exitReturnCode;
+
+  if ( !(childPID = vfork()) ) {
+    execle(scriptname, scriptname, arg1, NULL, NULL);
+    // The script process should not get here.
+    exit(-1);
+    }
+
+  /* Parent process: returned child PID. */
+  waitPID = wait( &status );
+  if ( waitPID != childPID ) {
+    fprintf(stderr, "execute_script: wait() failed.\n");
+    return -1;
+    }
+
+  if ( !WIFEXITED(status) ) {
+    fprintf(stderr, "execute_script: script exited abnormally.\n");
+    return -1;
+    }
+  // Only lower 8 bits of return code available using macro.  Convert
+  // back to signed int value.
+  exitReturnCode = (int) (char) WEXITSTATUS(status);
+  return exitReturnCode;
+}
+ 
+
   unsigned
-initTunTap(void)
+initTunTap( char *scriptname )
 {
   char * tuntapDevName = "/dev/net/tun";
   struct ifreq ifr;
@@ -369,10 +400,26 @@ initTunTap(void)
   // no physical transmission media to corrupt the data.
   //ioctl(fdTunTap, TUNSETNOCSUM, 1); // Fixme: need checksumming?
 
-  fprintf(stderr, "tuntap device '%s' ready, do commands now and type char.\n",
-          tuntapDevName);
-  getchar();
-  fprintf(stderr, "continuing execution...\n");
+  /* Execute the configuration script */
+  if( (scriptname != NULL) &&
+      (strcmp(scriptname, "") != 0) &&
+      (strcmp(scriptname, "none") != 0) ) {
+    if ( execute_script(scriptname, ifr.ifr_name) != 0 ) {
+      close(fdTunTap);
+      fprintf(stderr,"Error: execute script '%s' on %s failed.\n",
+              scriptname, ifr.ifr_name);
+      return(0); // Fail.
+      }
+    fprintf(stderr,"execute script '%s' on %s finished.\n",
+            scriptname, ifr.ifr_name);
+    }
+  else {
+    fprintf(stderr, "tuntap device '%s' ready, do commands now and type char.\n",
+            tuntapDevName);
+    getchar();
+    fprintf(stderr, "continuing execution...\n");
+    }
+      
 
   fcntl(fdTunTap, F_SETFL, O_NONBLOCK | O_ASYNC);
 
