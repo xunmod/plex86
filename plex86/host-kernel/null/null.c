@@ -123,6 +123,18 @@ hostOSCopyToUser(void *to, void *from, unsigned long len)
   return 0;
 }
 
+  unsigned long
+hostOSCopyFromUserIoctl(void *to, void *from, unsigned long len)
+{
+  return 0;
+}
+
+  unsigned long
+hostOSCopyToUserIoctl(void *to, void *from, unsigned long len)
+{
+  return 0;
+}
+
   Bit32u
 hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
                       Bit32u *ppi, Bit32u *kernelAddr)

@@ -51,12 +51,12 @@ void handleMonFault(guestStackContext_t *monContext);
 Bit32u readCR2(void)
 {
   Bit32u cr2;
-  asm volatile ("movl %%cr2, %0" : "=r" (cr2));
+  __asm__ volatile ("movl %%cr2, %0" : "=r" (cr2));
   return( cr2 );
 }
 
 
-asm (
+__asm__ (
 ".text                  \n\t"
 
 /* __handle_fault:  This is called by all of the monitor's fault handler

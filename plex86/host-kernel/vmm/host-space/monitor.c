@@ -95,7 +95,7 @@ hostModuleInit(void)
   {
   Bit32u cr0;
 
-  asm volatile ( "movl %%cr0, %0" : "=r" (cr0) );
+  __asm__ volatile ( "movl %%cr0, %0" : "=r" (cr0) );
   hostOSKernelPrint("host CR0=0x%x\n", cr0);
   }
 #endif
@@ -732,7 +732,7 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
         /* Can't change guest CPUID. */
         return -Plex86ErrnoEINVAL;
         }
-      if ( hostOSCopyFromUser(&vm->guestCPUIDInfo, (void *)arg,
+      if ( hostOSCopyFromUserIoctl(&vm->guestCPUIDInfo, (void *)arg,
                               sizeof(vm->guestCPUIDInfo)) )
         return -Plex86ErrnoEFAULT;
 /* xxx Value checks here. */
@@ -743,7 +743,7 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
     case PLEX86_REGISTER_MEMORY:
       {
       plex86IoctlRegisterMem_t registerMemMsg;
-      if ( hostOSCopyFromUser(&registerMemMsg, (void *)arg,
+      if ( hostOSCopyFromUserIoctl(&registerMemMsg, (void *)arg,
                               sizeof(registerMemMsg)) )
         return -Plex86ErrnoEFAULT;
       return( hostIoctlRegisterMem(vm, &registerMemMsg) );
@@ -791,10 +791,10 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
       plex86IoctlExecute_t executeMsg;
       int ret;
 
-      if ( hostOSCopyFromUser(&executeMsg, (void *)arg, sizeof(executeMsg)) )
+      if ( hostOSCopyFromUserIoctl(&executeMsg, (void *)arg, sizeof(executeMsg)) )
         return -Plex86ErrnoEFAULT;
       ret = hostIoctlExecute(vm, &executeMsg);
-      if ( hostOSCopyToUser((void *)arg, &executeMsg, sizeof(executeMsg)) )
+      if ( hostOSCopyToUserIoctl((void *)arg, &executeMsg, sizeof(executeMsg)) )
         return -Plex86ErrnoEFAULT;
       return ret;
       }
@@ -1808,7 +1808,7 @@ hostGetCpuCapabilities(void)
   Bit32u eax, ebx, ecx, edx;
 
   /* Get the highest allowed cpuid level */
-  asm volatile (
+  __asm__ volatile (
     "xorl %%eax,%%eax\n\t"
     "cpuid"
     : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
@@ -1824,7 +1824,7 @@ hostGetCpuCapabilities(void)
   hostCpuIDInfo.vendorDWord2 = ecx;
 
   /* CPUID w/ EAX==1: Processor Signature & Feature Flags */
-  asm volatile (
+  __asm__ volatile (
     "movl $1,%%eax\n\t"
     "cpuid"
     : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)

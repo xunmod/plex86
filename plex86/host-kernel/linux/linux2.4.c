@@ -505,7 +505,7 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
       }
     }
 
-  asm volatile ("movl %%cr3, %0" : "=r" (host_cr3));
+  __asm__ volatile ("movl %%cr3, %0" : "=r" (host_cr3));
   host_pgd = (pageEntry_t *)(phys_to_virt(host_cr3 & ~0xfff));
 
   for (i = 0; i < n_pages; i++) {
@@ -724,6 +724,18 @@ hostOSCopyFromUser(void *to, void *from, unsigned long len)
 
   unsigned long
 hostOSCopyToUser(void *to, void *from, unsigned long len)
+{
+  return( copy_to_user(to, from, len) );
+}
+
+  unsigned long
+hostOSCopyFromUserIoctl(void *to, void *from, unsigned long len)
+{
+  return( copy_from_user(to, from, len) );
+}
+
+  unsigned long
+hostOSCopyToUserIoctl(void *to, void *from, unsigned long len)
 {
   return( copy_to_user(to, from, len) );
 }

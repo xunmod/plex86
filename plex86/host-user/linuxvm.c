@@ -111,8 +111,8 @@ static void      myCtrlCHandler(int signum);
 // Variables
 // =========
 
-asm (".comm   plex86PrintBufferPage,4096,4096");
-asm (".comm   plex86GuestCPUPage,4096,4096");
+__asm__ (".comm   plex86PrintBufferPage,4096,4096");
+__asm__ (".comm   plex86GuestCPUPage,4096,4096");
 extern Bit8u       plex86PrintBufferPage[];
 extern Bit8u       plex86GuestCPUPage[];
 
@@ -286,7 +286,7 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
     }
 
   fprintf(stderr, "plex86: setting to PLEX86_LINUX_VM_MODE.\n");
-  if (ioctl(plex86FD, PLEX86_LINUX_VM_MODE, &ioctlMsg) != 0) {
+  if (ioctl(plex86FD, PLEX86_LINUX_VM_MODE, NULL) != 0) {
     fprintf(stderr, "plex86: ioctl(PLEX86_LINUX_VM_MODE) failed.\n");
     (void) plex86TearDown();
     return(1); // Error.
@@ -425,7 +425,7 @@ plex86CpuInfo(void)
    */
    
   /* Get the highest allowed cpuid level. */
-  asm volatile (
+  __asm__ volatile (
     "xorl %%eax,%%eax\n\t"
     "cpuid"
     : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
@@ -441,7 +441,7 @@ plex86CpuInfo(void)
   guestCPUID.vendorDWord2 = ecx;
 
   /* CPUID w/ EAX==1: Processor Signature & Feature Flags. */
-  asm volatile (
+  __asm__ volatile (
     "movl $1,%%eax\n\t"
     "cpuid"
     : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)

@@ -208,9 +208,9 @@ typedef Bit32u phyAddr_t;
 #endif
 #define PLEX86_RESET         _IO('k', 3)
 #define PLEX86_TEARDOWN      _IO('k', 4)
-#define PLEX86_EXECUTE       _IO('k', 5)
-#define PLEX86_CPUID         _IO('k', 6)
-#define PLEX86_REGISTER_MEMORY _IO('k', 7)
+#define PLEX86_EXECUTE       _IOWR('k', 5, plex86IoctlExecute_t)
+#define PLEX86_CPUID         _IOW('k', 6, cpuid_info_t)
+#define PLEX86_REGISTER_MEMORY _IOW('k', 7, plex86IoctlRegisterMem_t)
 #define PLEX86_UNREGISTER_MEMORY _IO('k', 8)
 #define PLEX86_LINUX_VM_MODE _IO('k', 9)
 #else

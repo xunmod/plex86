@@ -82,7 +82,7 @@ static void guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t selector);
 
 static inline void loadCR4(Bit32u newCR4)
 {
-  asm volatile (
+  __asm__ volatile (
     "movl %0, %%cr4"
       : /* No outputs. */
       : "r" (newCR4)

@@ -6,7 +6,7 @@
 
 
 #define incrementAtomic(v) ({ \
-  asm volatile ( \
+  __asm__ volatile ( \
     "lock incl %0" \
     : "=m" (v) \
     : "0" (v) \
