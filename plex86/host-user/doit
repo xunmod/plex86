@@ -1,20 +1,60 @@
-# For the initrd image, align it at the end of guest physical memory.
-# For example, if you have a 6Meg initrd and 32 megs of guest physical
-# memory, then it goes as 0x2000000 - 0x0600000 = 0x1a00000.  Make
-# 'ramdisk_size='; reflects the size of the initrd image
-#   in terms of Kilobytes.  6M * 1024 == 6144K.
-# 'bogomips=', get the bogomips rating from your host machine and stick it
-#   here (just the integer part).
-# 'mem=nopentium' disables use of 4Meg pages on newer kernels.
+#! /bin/bash
+#
+#  $Id$
+#
+#  doit: start plex86 with requested parameters.
+#  Copyright (C) 1999-2003  Kevin P. Lawton
 
+  # The bootloader image is from plex86.
+setup32=../guest-kernel/linux/setup32.img
 
+  # The plex86'ified Linux kernel; result of a "make vmlinux", then a
+  # objcopy -O binary vmlinux vmlinux-2.x.x-plex86.img
+linux=/tmp/vmlinux-2.4.21-plex86.img
+
+  # An initial ramdisk image with ext2 filesystem; must be 1k multiple.
+initrd=/tmp/initrd-2.4.21-xapps.img
+
+  # Size of memory of the VM, in megabytes (2^10).
+megs=32
+
+  # Bogomips rating from your host; type "dmesg | grep -i bogomips"
+bogomips=989
+
+  # Tun/tap script file, if any.  Otherwise, you have to manually type
+  # in commands as root on another window after plex86 starts.
+#tun_script=../misc/tuntap-sample-script
+tun_script=
+
+#######################################################################
+
+ramdisk_size_bytes=`wc -c $initrd | cut -f 1 -d " "`
+ramdisk_size_k=$[$ramdisk_size_bytes/1024]
+ramdisk_location=$[($megs*1024*1024)-$ramdisk_size_bytes]
+linux_cmdline="root=/dev/ram0 init=/linuxrc mem=nopentium rw"
+linux_cmdline="$linux_cmdline ramdisk_size=$ramdisk_size_k bogomips=$bogomips"
+
+# Create the -tun-script option.
+if [ "x$tun_script" == "x" ]; then
+  tun_option=
+else
+  tun_option="-tun-script $tun_script"
+fi
+
+# Sanity check that the initrd is a 1k multiple.
+sanity_bytes=$[$ramdisk_size_k*1024]
+if [ $sanity_bytes != $ramdisk_size_bytes ]; then
+  echo "Error: initrd '$initrd' is not a 1k multiple."
+  exit 1 # Fail.
+fi
+
+# Start plex86.
 ./linuxvm \
-  -megs 32 \
-  -linux-image ~/linux/vmlinux-2.4.20-plex86 \
-  -initrd-image 0x1a00000 ~/linux/initrd.6M.img \
-  -command-line \
-    "root=/dev/ram0 ramdisk_size=6144 init=/linuxrc mem=nopentium bogomips=989 rw"
+  -megs $megs \
+  -linux-image $linux \
+  -initrd-image $ramdisk_location $initrd \
+  -linux-commandline "$linux_cmdline" \
+  -bootloader-image $setup32 \
+  -dump-vga
 
-#  -dump-vga \
-#  -tun-script ../misc/tuntap-sample-script \
-
+exit 0 # Succeed.

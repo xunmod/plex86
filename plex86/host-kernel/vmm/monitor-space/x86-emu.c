@@ -522,6 +522,17 @@ monprint(vm, "GDTR.limit = 0x%x.\n", limit16);
       return 0;
       }
 
+    case 0x2e: // CS:
+      {
+      // This is essentially a NOP.  CS is used in the 32-bit bootstrap
+      // code during the initial sequence, only to access memory holding
+      // an GDT information structure.
+      if (iLen == 1) { // Prevent endless string of prefixes doing overrun.
+        goto decodeOpcode;
+        }
+      return 0;
+      }
+
     case 0x66: // Opsize:
       {
       if (iLen == 1) { // Prevent endless string of prefixes doing overrun.

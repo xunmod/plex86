@@ -19,7 +19,6 @@
 
 #include "plex86.h"
 #include "linuxvm.h"
-#include "linux-setup.h"
 #include "eflags.h"
 #include "hal.h"
 #include "hal-user.h"
@@ -38,8 +37,12 @@
 #define Plex86StateMemRegistered    0x02
 #define Plex86StateReady            0x03 /* All bits set. */
 
-#define SetupPageAddr 0x00090000
-#define BootGDTAddr   0x00091000
+#define KernelSetupAddr     0x00090000
+#define KernelCLAddr        0x00090800
+#define BootloaderGDTAddr   0x00091000
+#define BootloaderCLAddr    0x00091800
+#define BootloaderStackAddr 0x00092000
+#define BootloaderCodeAddr  0x00093000
 
 #define PageSize 4096
 
@@ -47,52 +50,6 @@ typedef struct {
   Bit32u low;
   Bit32u high;
   } __attribute__ ((packed)) gdt_entry_t ;
-
-
-#if 0
-// From linux/include/asm-i386/setup.h
-#define PARAM ((unsigned char *)empty_zero_page)
-
-ok #define SCREEN_INFO (*(struct screen_info *) (PARAM+0))
-ok #define EXT_MEM_K (*(unsigned short *) (PARAM+2))
-ok #define ALT_MEM_K (*(unsigned long *) (PARAM+0x1e0))
-ok #define APM_BIOS_INFO (*(struct apm_bios_info *) (PARAM+0x40))
--- #define DRIVE_INFO (*(struct drive_info_struct *) (PARAM+0x80))
-ok #define SYS_DESC_TABLE (*(struct sys_desc_table_struct*)(PARAM+0xa0))
-ok #define MOUNT_ROOT_RDONLY (*(unsigned short *) (PARAM+0x1F2))
-ok #define RAMDISK_FLAGS (*(unsigned short *) (PARAM+0x1F8))
-ok #define VIDEO_MODE (*(unsigned short *) (PARAM+0x1FA))
-ok #define ORIG_ROOT_DEV (*(unsigned short *) (PARAM+0x1FC))
-ok #define AUX_DEVICE_INFO (*(unsigned char *) (PARAM+0x1FF))
-ok #define LOADER_TYPE (*(unsigned char *) (PARAM+0x210))
-ok #define KERNEL_START (*(unsigned long *) (PARAM+0x214))
-ok #define INITRD_START (*(unsigned long *) (PARAM+0x218))
-ok #define INITRD_SIZE (*(unsigned long *) (PARAM+0x21c))
-ok #define COMMAND_LINE ((char *) (PARAM+2048))
-
-ok #define EDD_NR     (*(unsigned char *) (PARAM+EDDNR))
-ok #define EDD_BUF     ((struct edd_info *) (PARAM+EDDBUF))
-ok #define E820_MAP_NR (*(char*) (PARAM+E820NR))
-ok #define E820_MAP    ((struct e820entry *) (PARAM+E820MAP))
-#endif
-
-// initrd= [BOOT] Specify the location of the initial ramdisk
-// ramdisk_size= [RAM] Sizes of RAM disks in kilobytes
-//         New name for the ramdisk parameter.
-//         See Documentation/ramdisk.txt.
-// ramdisk_start=  [RAM] Starting block of RAM disk image (so you can
-//         place it after the kernel image on a boot floppy).
-//         See Documentation/ramdisk.txt.
-// Kernel command line. (Linux uses only 128 max bytes out of 2k buffer)
-//memset(params->commandline, 0, sizeof(params->commandline));
-//  w/ devfs:
-//    root=/dev/ram0 init=/linuxrc rw
-//  w/o devfs:
-//    root=/dev/rd/0 init=/linuxrc rw
-//strcpy((char*)params->commandline, "root=/dev/ram0 init=/linuxrc rw"
-//                                   " mem=nopentium");
-//strcpy((char*)params->commandline, "root=/dev/rd/0 init=/linuxrc rw");
-
 
 
 // ===================
@@ -103,7 +60,6 @@ static int      openFD(void);
 static unsigned plex86CpuInfo(void);
 static phyAddr_t loadImage(unsigned char *path, phyAddr_t imagePhyAddr,
                            phyAddr_t sizeMax);
-static void initLinuxSetupPage(void);
 static void initLinuxIOenvironment(void);
 static void initLinuxCPUMemenvironment(void);
 static unsigned  executeLinux(void);
@@ -137,6 +93,11 @@ static unsigned char initrdImagePathname[NAME_MAX];
 static phyAddr_t initrdImageLoadAddr = 0; // Signal no initrd.
 static phyAddr_t initrdImageSize=0;
 
+#define BLCommandLineMax 2048 // Fixme: should get from include file.
+#define KernelCommandLineMax 2048 // Fixme: should get from include file.
+static unsigned char blImagePathname[NAME_MAX];
+static unsigned char blCommandLine[BLCommandLineMax];
+
 static unsigned char tunscriptPathname[NAME_MAX];
 
 static unsigned char kernelCommandLine[KernelCommandLineMax];
@@ -164,12 +125,6 @@ main(int argc, char *argv[])
 #define CheckArgsForParameter(n) \
     if ( (argi+(n)) >= argc ) goto errorArgsUnderflow
 
-  // Sanity checks.
-  if (sizeof(linuxSetupParams_t) != 4096) {
-    fprintf(stderr, "plex86: sizeof(linuxSetupParams_t) is %u, "
-                    "should be 4096.\n", sizeof(linuxSetupParams_t));
-    return(1); // Error.
-    }
   if ( sizeof(descriptor_t) != 8 ) {
     fprintf(stderr, "plex86: sizeof(descriptor_t) is %u, "
                     "should be 8.\n", sizeof(descriptor_t));
@@ -180,11 +135,6 @@ main(int argc, char *argv[])
                     "should be 8.\n", sizeof(gdt_entry_t));
     return(1); // Error.
     }
-if ( sizeof(descriptor_t) != 8 ) {
-  fprintf(stderr, "plex86: sizeof(descriptor_t) is %u, "
-                  "should be 8.\n", sizeof(descriptor_t));
-  return(1); // Error.
-  }
   if ( sizeof(gate_t) != 8 ) {
     fprintf(stderr, "plex86: sizeof(gate_t) is %u, "
                     "should be 8.\n", sizeof(gate_t));
@@ -197,6 +147,8 @@ if ( sizeof(descriptor_t) != 8 ) {
   initrdImagePathname[0] = 0;
   tunscriptPathname[0] = 0;
   kernelCommandLine[0] = 0;
+  blImagePathname[0] = 0;
+  blCommandLine[0] = 0;
   memset( &faultCount, 0, sizeof(faultCount) );
 
   /* Process command line. */
@@ -224,11 +176,24 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
       initrdImagePathname[NAME_MAX-1] = 0; /* Make damn sure string ends. */
       argi += 3;
       }
-    else if ( !strcmp(argv[argi], "-command-line") ) {
+    else if ( !strcmp(argv[argi], "-bootloader-image") ) {
+      CheckArgsForParameter(1);
+      strncpy(blImagePathname, argv[argi+1], NAME_MAX-1);
+      blImagePathname[NAME_MAX-1] = 0; /* Make damn sure string ends. */
+      argi += 2;
+      }
+    else if ( !strcmp(argv[argi], "-linux-commandline") ) {
       CheckArgsForParameter(1);
       strncpy(kernelCommandLine, argv[argi+1], KernelCommandLineMax);
       /* Make damn sure string ends. */
       kernelCommandLine[KernelCommandLineMax-1] = 0;
+      argi += 2;
+      }
+    else if ( !strcmp(argv[argi], "-bootloader-commandline") ) {
+      CheckArgsForParameter(1);
+      strncpy(blCommandLine, argv[argi+1], BLCommandLineMax);
+      /* Make damn sure string ends. */
+      blCommandLine[BLCommandLineMax-1] = 0;
       argi += 2;
       }
     else if ( !strcmp(argv[argi], "-dump-vga") ) {
@@ -271,6 +236,10 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
   if ( tunscriptPathname[0] == 0 ) {
     fprintf(stderr, "Note: you can specify a script to configure the tuntap "
                     "interface using -tun-script.\n");
+    }
+  if ( blImagePathname[0] == 0 ) {
+    fprintf(stderr, "You must provide a '-bootloader-image' option.\n");
+    goto errorUsage;
     }
 
   // Allocate guest machine physical memory.
@@ -330,8 +299,8 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
     return(1); // Error.
     }
 
-  // Load linux kernel image, and optionally the initrd image into the
-  // guest's physical memory.
+  // Load linux kernel image, optionally the initrd image into the
+  // guest's physical memory.  Then load the 32-bit mini-bootloader.
   {
   phyAddr_t imageSizeMax;
 
@@ -353,16 +322,30 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
       (void) plex86TearDown();
       return(1); // Error.
       }
+fprintf(stderr, "INITRD: loaded @ 0x%x, size = %u\n",
+        initrdImageLoadAddr, initrdImageSize);
+    }
+
+  // Load mini 32-bit bootloader @ 0x90000.  It needs to fit before the
+  // VGA memory area at 0xA0000, so it has a max size of 0x10000.
+  if ( loadImage(blImagePathname, 0x90000, 0x10000) == 0 ) {
+    (void) plex86TearDown();
+    return(1); // Error.
     }
   }
 
-  // On a normal machine, the entire boot process distills boot information
-  // into one page of memory for communication with the 32-bit kernel
-  // image which is loaded into memory.  We need to initialize this page
-  // to appropriate values for our boot.
 
-  fprintf(stderr, "plex86: filling in Linux setup page.\n");
-  initLinuxSetupPage();
+  // Copy kernel command line to Linux setup area, if one was given.
+  if ( kernelCommandLine[0] )
+    strcpy( &plex86MemPtr[KernelCLAddr], kernelCommandLine );
+
+  // Pass required args to the bootloader, based on requested parameters.
+  sprintf( &plex86MemPtr[BootloaderCLAddr],
+           "-megs %u -initrd-image 0x%x 0x%x",
+           nMegs, initrdImageLoadAddr, initrdImageSize);
+  // Fixme: we should allow *append* to bootloader args, from blCommandLine[]
+  //if ( blCommandLine[0] )
+  //  strcpy( &plex86MemPtr[BootloaderCLAddr], blCommandLine );
 
   initLinuxIOenvironment();
   initLinuxCPUMemenvironment();
@@ -595,98 +578,6 @@ error:
 }
 
   void
-initLinuxSetupPage(void)
-{
-  linuxSetupParams_t *params =
-         (linuxSetupParams_t *) &plex86MemPtr[SetupPageAddr];
-  phyAddr_t memNMegs = plex86MemSize >> 20;
-
-  memset( params, '\0', sizeof(*params) );
-
-#if 0
-  // Stuff from older code.  These fields conflicted with new
-  // definitions of the boot parameter area, as per the file
-  // "linux/Documentation/i386/zero-page.txt".
-  params->bootsect_magic = 0xaa55;
-#endif
-
-  params->orig_x = 0;
-  params->orig_y = 0;
-  /* Memory size (total mem - 1MB, in KB) */
-  params->ext_mem_k = (memNMegs - 1) * 1024;
-  params->orig_video_page = 0;
-  params->orig_video_mode = 3;
-  params->orig_video_cols = 80;
-  params->orig_video_ega_bx = 3;
-  params->orig_video_lines = 25;
-  params->orig_video_isVGA = 1;
-  params->orig_video_points = 16;
-
-  // Commandline magic.  If it's 0xa33f, then the address of the commandline
-  // is calculated as 0x90000 + cl_offset.
-  params->cl_magic = 0xa33f;
-  params->cl_offset = 0x800;
-
-  //memset(&params->apm_bios_info, 0, sizeof(params->apm_bios_info));
-  //memset(&params->hd0_info, 0, sizeof(params->hd0_info));
-  //memset(&params->hd1_info, 0, sizeof(params->hd1_info));
-  params->sys_description_len = 0; // Make at least 4.
-  params->sys_description_table[0] = 0; // FIXME
-  params->sys_description_table[1] = 0; // FIXME
-  params->sys_description_table[2] = 0; // FIXME
-  params->sys_description_table[3] = 0; // FIXME
-  params->alt_mem_k = params->ext_mem_k; // FIXME
-  params->e820map_entries = 0;
-  params->eddbuf_entries = 0;
-  params->setup_sects = 0; // size of setup.S, number of sectors
-  params->mount_root_rdonly = 0;
-  params->sys_size = 0; // FIXME: size of compressed kernel-part in the
-                        // (b)zImage-file (in 16 byte units, rounded up)
-  params->swap_dev = 0; // (unused AFAIK)
-  if ( initrdImageLoadAddr ) {
-    // params->ramdisk_flags = RAMDISK_LOAD_FLAG; // FIXME
-    params->ramdisk_flags = 0; // FIXME
-    }
-  else {
-    params->ramdisk_flags = 0; // FIXME
-    }
-  params->vga_mode = 3; // FIXME: (old one)
-  params->orig_root_dev = 0x0000; // (high=Major, low=minor)
-  params->aux_device_info = 0; // FIXME
-  params->jump_setup = 0; // FIXME
-  memcpy(params->setup_signature, "HdrS", 4); // Signature for SETUP-header.
-  params->header_format_version = 0x0203; // Current header format.
-  //memset(params->setup_S_temp0, 0, sizeof(params->setup_S_temp0));
-  params->loader_type = 1; // Loadlin.  Should we use this?
-
-  // bit0 = 1: kernel is loaded high (bzImage)
-  // bit7 = 1: Heap and pointer (see below) set by boot loader.
-  params->loadflags = 0x1;
-  params->setup_S_temp1 = 0; // FIXME
-
-  params->kernel_start = linuxImageLoadAddr;
-  params->initrd_start = initrdImageLoadAddr;
-  params->initrd_size  = initrdImageSize;
-
-  //memset(params->setup_S_temp2, 0, sizeof(params->setup_S_temp2));
-  params->setup_S_heap_end_pointer = 0; // FIXME
-
-  // Int 15, ax=e820 memory map.
-  // params->e820map[0].addr = ;
-  // params->e820map[0].size = ;
-  // params->e820map[0].type = ;
-  // ...
-
-  // BIOS Enhanced Disk Drive Services.
-  // (From linux/include/asm-i386/edd.h, 'struct edd_info')
-  // Each 'struct edd_info is 78 bytes, times a max of 6 structs in array.
-  //memset(params->eddbuf, 0, sizeof(params->eddbuf));
-
-  if ( kernelCommandLine[0] )
-    strcpy((char*)params->commandline, kernelCommandLine);
-}
-
-  void
 initLinuxIOenvironment(void)
 {
   plex86GuestCPU->INTR = 0;
@@ -705,20 +596,19 @@ initLinuxCPUMemenvironment(void)
   // Memory
   // ======
 
-  // Setup a small bootstrap GDT.
-  gdt = (gdt_entry_t *) &plex86MemPtr[BootGDTAddr];
+  // Get pointer to bootloader GDT.
+  gdt = (gdt_entry_t *) &plex86MemPtr[BootloaderGDTAddr];
 
-  // Linux kernel code/data segments.
-  gdt[LinuxBootCsSlot].high = 0x00cf9a00; // CS
-  gdt[LinuxBootCsSlot].low  = 0x0000ffff;
-  gdt[LinuxBootDsSlot].high = 0x00cf9200; // DS/SS/ES/FS/GS
-  gdt[LinuxBootDsSlot].low  = 0x0000ffff;
+  // Fixme: remove these checks.
+  if (gdt[LinuxBootCsSlot].high != 0x00cf9a00) goto Error;
+  if (gdt[LinuxBootCsSlot].low  != 0x0000ffff) goto Error;
+  if (gdt[LinuxBootDsSlot].high != 0x00cf9200) goto Error;
+  if (gdt[LinuxBootDsSlot].low  != 0x0000ffff) goto Error;
 
-  // Linux user code/data segments.
-  gdt[LinuxUserCsSlot].high = 0x00cffa00; // CS
-  gdt[LinuxUserCsSlot].low  = 0x0000ffff;
-  gdt[LinuxUserDsSlot].high = 0x00cff200; // DS/SS/ES/FS/GS
-  gdt[LinuxUserDsSlot].low  = 0x0000ffff;
+  if (gdt[LinuxUserCsSlot].high != 0x00cffa00) goto Error;
+  if (gdt[LinuxUserCsSlot].low  != 0x0000ffff) goto Error;
+  if (gdt[LinuxUserDsSlot].high != 0x00cff200) goto Error;
+  if (gdt[LinuxUserDsSlot].low  != 0x0000ffff) goto Error;
 
   // ===
   // CPU
@@ -726,24 +616,21 @@ initLinuxCPUMemenvironment(void)
 
   plex86GuestCPU->cr0.raw = 0x00000033; // CR0.PE=1
   plex86GuestCPU->eflags  = 0x00000002; // EFLAGS.IF=0 (reserved bit=1)
-  plex86GuestCPU->gdtr.base  = BootGDTAddr;
+  plex86GuestCPU->gdtr.base  = BootloaderGDTAddr;
   plex86GuestCPU->gdtr.limit = 0x400;
-
-  // Addr of setup page passed to 32-bit code via ESI.
-  plex86GuestCPU->genReg[GenRegESI] = SetupPageAddr;
 
   // CS:EIP = 0x10: linuxImageLoadAddr
   plex86GuestCPU->sreg[SRegCS].sel.raw = Selector(LinuxBootCsSlot,0,0);
   plex86GuestCPU->sreg[SRegCS].des = * (descriptor_t *) &gdt[LinuxBootCsSlot];
   plex86GuestCPU->sreg[SRegCS].valid = 1;
-  plex86GuestCPU->eip      = linuxImageLoadAddr;
+  plex86GuestCPU->eip = BootloaderCodeAddr;
 
   // Plex86 requires a valid SS to iret to the guest.  Linux will reload
   // this immediately, so it's really not used.
   plex86GuestCPU->sreg[SRegSS].sel.raw = Selector(LinuxBootDsSlot,0,0);
   plex86GuestCPU->sreg[SRegSS].des = * (descriptor_t *) &gdt[LinuxBootDsSlot];
   plex86GuestCPU->sreg[SRegSS].valid = 1;
-  plex86GuestCPU->genReg[GenRegESP] = 0x60000; // Fixme
+  plex86GuestCPU->genReg[GenRegESP] = BootloaderStackAddr + 4096; // Fixme:
 
 
   // Leave zeroed:
@@ -754,6 +641,10 @@ initLinuxCPUMemenvironment(void)
   //   DRx
   //   TRx
   //   CR[1..4]
+return;
+
+Error: // Fixme:
+  (void) plex86TearDown();
 }
 
   unsigned
@@ -889,27 +780,33 @@ fprintf(stderr, "Attempt to read tun/tap device returns %d.\n", packetLen);
   void
 doVGADump(void)
 {
-#if 0
+#if 1
   // VGA text framebuffer dump.
   unsigned col, c, i, lines;
   unsigned char lineBuffer[81];
 
   unsigned framebuffer_start;
+  unsigned isVisible;
 
-  framebuffer_start = 0xb8000 + 2*((vga.CRTC.reg[12] << 8) + vga.CRTC.reg[13]);
+//framebuffer_start = 0xb8000 + 2*((vga.CRTC.reg[12] << 8) + vga.CRTC.reg[13]);
+  framebuffer_start = 0xb8000;
   lines = 204; // 204 Max
   //lines = 160; // 204 Max
 
   for (i=0; i<2*80*lines; i+=2*80) {
+    isVisible = 0;
     for (col=0; col<80; col++) {
       c = plex86MemPtr[framebuffer_start + i + col*2];
-      if ( isgraph(c) )
+      if ( isgraph(c) ) {
         lineBuffer[col] = c;
+        isVisible = 1;
+        }
       else
         lineBuffer[col] = ' ';
       }
     lineBuffer[sizeof(lineBuffer)-1] = 0; // Null terminate string.
-    fprintf(stderr, "%s\n", lineBuffer);
+    if (isVisible)
+      fprintf(stderr, "%s\n", lineBuffer);
     }
 #endif
 }

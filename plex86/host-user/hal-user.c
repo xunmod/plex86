@@ -25,7 +25,6 @@
 
 #include "plex86.h"
 #include "linuxvm.h"
-#include "linux-setup.h"
 #include "hal.h"
 #include "hal-user.h"
 
