@@ -90,38 +90,4 @@ typedef struct {
   } vga_t;
 
 
-// ===================
-// Function prototypes
-// ===================
-
-extern unsigned  pitInp(unsigned iolen, unsigned port);
-extern void      pitOutp(unsigned iolen, unsigned port, unsigned val);
-extern unsigned  cmosInp(unsigned iolen, unsigned port);
-extern void      cmosOutp(unsigned iolen, unsigned port, unsigned val);
-extern unsigned  vgaInp(unsigned iolen, unsigned port);
-extern void      vgaOutp(unsigned iolen, unsigned port, unsigned val);
-extern void      pitExpireClocks(unsigned pitClocks);
-extern void      picIrq(unsigned irqNum,  unsigned val);
-extern unsigned  picIAC(void);
-extern unsigned  picInp(unsigned iolen, unsigned port);
-extern void      picServiceMaster(void);
-extern void      picOutp(unsigned iolen, unsigned port, unsigned val);
-extern void      doVGADump(void);
-
-
-
-// =========
-// Variables
-// =========
-
-extern pic_t    picMaster;
-extern pic_t    picSlave;
-extern unsigned port0x80;
-extern pit_t    pit;
-extern cmos_t   cmos;
-extern vga_t    vga;
-
-extern unsigned  cpuToPitRatio;
-
-
 #endif  // __IO_H__
