@@ -65,6 +65,7 @@ if (vm->io.pit_bogus_counter > 100) {
               (vm->io.pit.speaker_data_on<<1) |
               (vm->io.pit.timer[2].GATE?1:0) );
       goto error;
+
     default:
       monprint(vm, "pit: read of port 0x%x unsupported.\n", port);
       goto error;
