@@ -1418,7 +1418,7 @@ hostCopyGuestStateToUserSpace(vm_t *vm)
       }
     }
 
-  /* Could use memcpy(); both are in order.  Pack both structs. */
+  /* Fixme: Could use memcpy(); both are in order.  Pack both structs. */
   guest_cpu->genReg[GenRegEDI] = guest_stack_context->edi;
   guest_cpu->genReg[GenRegESI] = guest_stack_context->esi;
   guest_cpu->genReg[GenRegEBP] = guest_stack_context->ebp;

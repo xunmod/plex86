@@ -191,6 +191,7 @@ typedef struct {
   } __attribute__ ((packed)) guest_cpu_t;
 
 
+typedef Bit32u phyAddr_t;
 
 
 

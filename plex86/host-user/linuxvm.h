@@ -11,7 +11,6 @@
 // ========
 // Typedefs
 // ========
-typedef Bit32u phyAddr_t;
 
 // =========
 // Functions

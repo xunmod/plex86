@@ -669,6 +669,8 @@ unsigned getMonPTi(vm_t *, unsigned pdi, unsigned source);
 #define CLI() asm volatile ("cli": : : "memory")
 #define STI() asm volatile ("sti": : : "memory")
 
+void doGuestFault(vm_t *, unsigned fault, unsigned errorCode);
+
 #endif  /* MONITOR Space. */
 
 #endif  /* __MONITOR_H__ */
