@@ -14,6 +14,14 @@
 #include "monitor.h"
 
 
+static inline void loadCR3(Bit32u newCR3)
+{
+  __asm__ volatile (
+    "movl %0, %%cr3"
+      : /* No outputs. */
+      : "r" (newCR3)
+    );
+}
 
 static unsigned getFreePageTable(vm_t *, unsigned pdi);
 static Bit32u getHostOSPinnedPage(vm_t *vm, Bit32u ppi);
@@ -272,6 +280,35 @@ done:
   // The shadow page table entry is cleared.  Now invalidate the TLB entry.
   invlpg_mon_offset( Guest2Monitor(vm, guestLinAddr) );
 }
+
+  void
+monInitShadowPaging(vm_t *vm)
+{
+  // Fixme: synchronize with similar code in host-space.
+  pageEntry_t *monPDir;
+  Bit32u pdi;
+  nexus_t *nexus = vm->guest.addr.nexus;
+
+  /* Reset page table heap */
+  vm->ptbl_laddr_map_i = 0;
+
+  /* Clear monitor PD except 4Meg range used by monitor */
+  monPDir = vm->guest.addr.page_dir;
+  for (pdi=0; pdi<1024; pdi++) {
+#if ANAL_CHECKS
+    vm->guest.addr.page_tbl_laddr_map[pdi] = -1; /* max unsigned */
+#endif
+    if (pdi != vm->mon_pdi)
+      monPDir[pdi].raw = 0;
+    }
+
+  /* Update vpaging timestamp. */
+  vm->vpaging_tsc = vm_rdtsc();
+
+  // Reload actual monitor CR3 value to flush old guest mappings.
+  loadCR3( nexus->mon_cr3 );
+}
+
 
   unsigned
 mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,

@@ -19,7 +19,7 @@ all:
 
 endif
 
-$(EXE): linuxvm.o hal-user.o x86-emu.o
+$(EXE): linuxvm.o hal-user.o
 	$(HOST_USER_CC) -o $@ $^
 
 clean: 

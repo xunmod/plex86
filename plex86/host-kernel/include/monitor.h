@@ -639,18 +639,21 @@ unsigned long hostOSCopyToUserIoctl(void *to, void *from, unsigned long len);
 
 void toHostFlushPrintBuf(vm_t *);
 void toHostRemapMonitor(vm_t *);
-int  monprint(vm_t *, char *fmt, ...);
+void toHostGuestFault(vm_t *, unsigned fault, unsigned errorCode);
+void toHostPinUserPage(vm_t *, Bit32u ppi);
+void toHostHalCall(vm_t *);
+
 void resetPrintBuf(vm_t *);
 
 /* Translate from guest laddr to monitor laddr. */
 #define Guest2Monitor(vm, laddr) ( ((Bit32u) (laddr)) - \
                                    vm->guest.addr.nexus->mon_base )
 
-void monpanic(vm_t *, char *fmt, ...) __attribute__ ((noreturn));
+int  monprint(vm_t *, char *fmt, ...) __attribute__ ((format (printf, 2, 3)));
+void monpanic(vm_t *, char *fmt, ...)
+    __attribute__ ((noreturn)) __attribute__ ((format (printf, 2, 3)));
 void monpanic_nomess(vm_t *);
 
-void toHostGuestFault(vm_t *, unsigned fault, unsigned errorCode);
-void toHostPinUserPage(vm_t *, Bit32u ppi);
 
 void guestPageFault(vm_t *, guestStackContext_t *context, Bit32u cr2);
 void *open_guest_phy_page(vm_t *, Bit32u ppage_index, Bit8u *mon_offset);
@@ -666,6 +669,7 @@ unsigned mapGuestLinAddr(vm_t *, Bit32u guest_laddr,
                          Bit32u *guest_ppage_index, unsigned us,
                          unsigned rw, Bit32u attr, Bit32u *error);
 void invalidateGuestLinAddr(vm_t *vm, Bit32u guestLAddr);
+void monInitShadowPaging(vm_t *vm);
 unsigned addPageAttributes(vm_t *, Bit32u ppi, Bit32u attr);
 phyPageInfo_t *getPageUsage(vm_t *, Bit32u ppage_index);
 void virtualize_lconstruct(vm_t *, Bit32u l0, Bit32u l1, unsigned perm);

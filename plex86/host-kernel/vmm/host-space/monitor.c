@@ -843,6 +843,7 @@ hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
   vm->system.INTR = guest_cpu->INTR;
 
   if ( (vm->mon_request == MonReqFlushPrintBuf) ||
+       (vm->mon_request == MonReqHalCall) ||
        (vm->mon_request == MonReqRedirect) ) {
     /* If the last message sent to user space was a print buffer flush,
      * then the monitor is still executing, and the state is valid.
@@ -1296,6 +1297,17 @@ guest_cpu->INTR = vm->system.INTR;
 #warning "Fixme: copy asynchronous fields here."
           // Copy asynchronous fields here / hostIoctlExecute() /
           //   hostCopyGuestStateToUserSpace()
+          guest_cpu->INTR = vm->system.INTR;
+          return 0;
+
+        case MonReqHalCall:
+          hostCopyGuestStateToUserSpace(vm);
+          executeMsg->cyclesExecuted       = vm->system.cyclesElapsed;
+//vm->system.cyclesElapsed         = 0; /* Reset after reporting. */
+          executeMsg->instructionsExecuted = 0; /* Handle later. */
+          executeMsg->monitorState.state   = vm->vmState;
+          executeMsg->monitorState.request = vm->mon_request;
+          // Fixme: see above.
           guest_cpu->INTR = vm->system.INTR;
           return 0;
 

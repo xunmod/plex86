@@ -55,7 +55,7 @@ typedef struct {
 
 static unsigned  emulateSysInstr(vm_t *);
 static void      emulateUserInstr(vm_t *);
-//static unsigned  setCRx(vm_t *, unsigned crx, Bit32u val32);
+static unsigned  setCRx(vm_t *, unsigned crx, Bit32u val32);
 static unsigned  setDRx(vm_t *, unsigned drx, Bit32u val32);
 static phyAddr_t translateLinToPhy(vm_t *, Bit32u lAddr);
 static unsigned  decodeModRM(vm_t *, Bit8u *opcodePtr, modRM_t *modRMPtr);
@@ -83,6 +83,15 @@ static inline void loadCR4(Bit32u newCR4)
     "movl %0, %%cr4"
       : /* No outputs. */
       : "r" (newCR4)
+    );
+}
+
+static inline void loadCR0(Bit32u newCR0)
+{
+  __asm__ volatile (
+    "movl %0, %%cr0"
+      : /* No outputs. */
+      : "r" (newCR0)
     );
 }
 
@@ -138,7 +147,7 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
           // monitor faults.
           return;
           }
-        toHostGuestFault(vm, fault, errorCode);
+        monpanic(vm, "doGuestFault: emulateSI failed.\n");
 #else
         // For now, defer back to the user space implementation until
         // the monitor space code is filled out.
@@ -330,6 +339,7 @@ decodeOpcode:
               }
 
             default:
+              monpanic(vm, "emulateSI: Group6: nnn=%u.\n", modRM.nnn);
             }
           return 0;
           }
@@ -380,6 +390,8 @@ monprint(vm, "GDTR.limit = 0x%x.\n", limit16);
               invalidateGuestLinAddr(vm, modRM.addr);
               goto advanceInstruction;
               }
+            default:
+              monpanic(vm, "emulateSI: Group7, nnn=%u.\n", modRM.nnn);
             }
           return 0;
           }
@@ -420,8 +432,6 @@ monprint(vm, "GDTR.limit = 0x%x.\n", limit16);
 
         case 0x22: // MOV_CdRd
           {
-return 0; // defer to user space implementation for now.
-#if 0
           Bit32u   val32;
           iLen += decodeModRM(vm, &opcode[iLen], &modRM);
           if ( modRM.mod!=3 ) {
@@ -431,8 +441,8 @@ return 0; // defer to user space implementation for now.
           val32 = GenReg(vm, modRM.rm);
           if ( setCRx(vm, modRM.nnn, val32) )
             goto advanceInstruction;
+          monpanic(vm, "emulateSI: setCRx failed.\n");
           return 0;
-#endif
           }
 
 
@@ -447,6 +457,7 @@ return 0; // defer to user space implementation for now.
           val32 = GenReg(vm, modRM.rm);
           if ( setDRx(vm, modRM.nnn, val32) )
             goto advanceInstruction;
+          monpanic(vm, "emulateSI: setDRx failed.\n");
           return 0;
           }
 
@@ -454,6 +465,7 @@ return 0; // defer to user space implementation for now.
           {
           if ( doWRMSR(vm) )
             goto advanceInstruction;
+          monpanic(vm, "emulateSI: doWRMSR failed.\n");
           return 0;
           }
 
@@ -554,20 +566,15 @@ return 0; // defer to user space implementation for now.
       unsigned Ib;
 
       Ib = opcode[iLen++];
+      EIP += iLen; // Commit instruction length.
       if (Ib == 0xff) {
         // This is the special "int $0xff" call for interfacing with the HAL.
-return 0; // defer to user space implementation for now.
-#if 0
-        EIP += iLen; // Commit instruction length.
-        halCall();
-        return 1; // OK
-#endif
+        toHostHalCall(vm);
         }
       else {
-        EIP += iLen; // Commit instruction length.
         doGuestInterrupt(vm, Ib, IntFlagSoftInt, 0);
-        return 1; // OK
         }
+      return 1; // OK
       }
 
     case 0xcf: // IRET
@@ -770,61 +777,43 @@ emulateUserInstr(vm_t *vm)
     }
 }
 
-#if 0
   unsigned
-setCRx(unsigned crx, Bit32u val32)
+setCRx(vm_t *vm, unsigned crx, Bit32u val32)
 {
+  guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
+  nexus_t *nexus        = vm->guest.addr.nexus;
+
   //monprint(vm, "setCR%u: val=0x%x.\n", crx, val32);
 
   switch ( crx ) {
-#if 0
-  // From bochs code.
-  switch (i->nnn()) {
-    case 0: // CR0 (MSW)
-      // BX_INFO(("MOV_CdRd:CR0: R32 = %08x @CS:EIP %04x:%04x ",
-      //   (unsigned) val_32,
-      //   (unsigned) BX_CPU_THIS_PTR sregs[BX_SEG_REG_CS].selector.value,
-      //   (unsigned) EIP));
-      SetCR0(val_32);
-      break;
-
-    case 1: /* CR1 */
-      BX_PANIC(("MOV_CdRd: CR1 not implemented yet"));
-      break;
-    case 2: /* CR2 */
-      BX_DEBUG(("MOV_CdRd: CR2 not implemented yet"));
-      BX_DEBUG(("MOV_CdRd: CR2 = reg"));
-      BX_CPU_THIS_PTR cr2 = val_32;
-      break;
-    case 3: // CR3
-      if (bx_dbg.creg)
-        BX_INFO(("MOV_CdRd:CR3 = %08x", (unsigned) val_32));
-      // Reserved bits take on value of MOV instruction
-      CR3_change(val_32);
-      BX_INSTR_TLB_CNTRL(CPU_ID, BX_INSTR_MOV_CR3, val_32);
-      // Reload of CR3 always serializes.
-      // invalidate_prefetch_q(); // Already done.
-      break;
-    }
-#endif
     case 0:
       {
-      plex86GuestCPU->cr0.raw = val32;
-      if ( !plex86GuestCPU->cr0.fields.pe ) {
-        monprint(vm, "setCR0: PE=0.\n");
-        return 0; // Fail.
+      Bit32u newMonCR0;
+
+      guestCpu->cr0.raw = val32;
+      if ( (guestCpu->cr0.raw & 0x60000033) != 0x00000033 ) {
+        monpanic(vm, "setCR0: guest CR0=0x%x\n", guestCpu->cr0.raw);
         }
+      // Fixme: sync with similar host-space code.
+      newMonCR0 = 0x8001003b | /* PG/WP/NE/ET/TS/MP/PE */
+          (val32 & 0x00040000); /* Pass-thru AM from guest. */
+      if ( newMonCR0 != nexus->mon_cr0 ) {
+        nexus->mon_cr0 = newMonCR0;
+        // Reload monitor CR0 due to delta.
+        loadCR0( newMonCR0 );
+        }
+
       // Fixme: have to notify the monitor of changes.
       return 1; // OK.
       }
 
-    // case 1:
-    // case 2:
-
     case 3:
       {
-      plex86GuestCPU->cr3 = val32;
-      // Fixme: have to notify the monitor of paging remap here.
+      guestCpu->cr3 = val32;
+      // The guest has reloaded its Page Directory Base Register.
+      // Reinitialize the monitor page tables which shadow the guest, and
+      // dynamic page shadowing will start from empty again.
+      monInitShadowPaging(vm);
       return 1; // OK.
       }
 
@@ -849,29 +838,32 @@ setCRx(unsigned crx, Bit32u val32)
 
       //if (guestCPUID.featureFlags.fields.vme)
       //  allowMask |= ((1<<1) | (1<<0)); // PVI
+#if 0
+      // Fixme: CR4 allowMask depends on CPUID.pge bit.
       if (guestCPUID.featureFlags.fields.pge)
         allowMask |= (1<<7);
+#endif
 
       // X86-64 has some behaviour with msr.lme / cr4.pae.
 
       if (val32 & ~allowMask) {
-         monprint(vm, "SetCR4: write of 0x%08x unsupported (allowMask=0x%x).",
+         monpanic(vm, "SetCR4: write of 0x%08x unsupported (allowMask=0x%x).",
              val32, allowMask);
-         return 0; // Fail.
          }
       val32 &= allowMask; // Screen out unsupported bits for good meassure.
-      plex86GuestCPU->cr4.raw = val32;
-      // Fixme: have to notify the monitor of paging remap here.
+      if ( (val32 & 0x0000077f) != 0x00000000 ) {
+        monpanic(vm, "setCR4: unsupported bits set (0x%x).\n", val32);
+        }
+      guestCpu->cr4.raw = val32;
+      // Fixme: synchronize with code in host-space.
       return 1; // OK.
       }
 
     default:
-      monprint(vm, "setCRx: reg=%u, val=0x%x.\n", crx, val32);
-      return 0; // Fail.
+      monpanic(vm, "setCR%u: val=0x%x.\n", crx, val32);
     }
   return 0; // Fail.
 }
-#endif
 
   unsigned
 setDRx(vm_t *vm, unsigned drx, Bit32u val32)

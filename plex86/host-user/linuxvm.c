@@ -23,7 +23,6 @@
 #include "eflags.h"
 #include "hal.h"
 #include "hal-user.h"
-#include "x86-emu.h"
 
 
 // NOTES:
@@ -42,6 +41,12 @@
 #define SetupPageAddr 0x00090000
 #define BootGDTAddr   0x00091000
 
+#define PageSize 4096
+
+typedef struct {
+  Bit32u low;
+  Bit32u high;
+  } __attribute__ ((packed)) gdt_entry_t ;
 
 
 #if 0
@@ -836,27 +841,13 @@ executeLoop:
         // except return to the monitor.
         goto executeLoop;
 
+      case MonReqHalCall:
+        halCall();
+        goto executeLoop;
+
       case MonReqPanic:
         fprintf(stderr, "plex86: MonReqPanic:\n");
         fprintf(stderr, "::%s\n", plex86PrintBuffer);
-        break;
-
-      case MonReqGuestFault:
-        //tsc += executeMsg.cyclesExecuted;
-//fprintf(stderr, "cyclesExecuted = %llu.\n", executeMsg.cyclesExecuted);
-#if 0
-        if (executeMsg.cyclesExecuted &&
-            (executeMsg.cyclesExecuted < minCyclesExecuted))
-          minCyclesExecuted = executeMsg.cyclesExecuted;
-        BiasCycles( executeMsg.cyclesExecuted );
-        pitClocks = ((unsigned) executeMsg.cyclesExecuted) / cpuToPitRatio;
-        pitExpireClocks( pitClocks );
-#endif
-        if ( doGuestFault(executeMsg.monitorState.guestFaultNo,
-                          executeMsg.monitorState.guestFaultError) ) {
-plex86GuestCPU->eflags &= ~0x10000; // Fixme: clear RF
-          goto executeLoop;
-          }
         break;
 
       default:

@@ -85,3 +85,14 @@ toHostPinUserPage(vm_t *vm, Bit32u ppi)
 
   restoreIF(eflags);
 }
+
+  void
+toHostHalCall(vm_t *vm)
+{
+  Bit32u eflags = saveEFlagsCLI();
+
+  vm->mon_request = MonReqHalCall;
+  vm->guest.__mon2host();
+
+  restoreIF(eflags);
+}

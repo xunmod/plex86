@@ -259,7 +259,7 @@ typedef Bit32u phyAddr_t;
 #define MonReqGuestFault        6
 #define MonReqPinUserPage       7
 #define MonReqPanic             8
-
+#define MonReqHalCall           9
 #define MonReqCyclesUpdate     10
 
 #define VMStateFDOpened               0x001
