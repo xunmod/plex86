@@ -7,6 +7,7 @@
 #   here (just the integer part).
 # 'mem=nopentium' disables use of 4Meg pages on newer kernels.
 
+
 ./linuxvm \
   -megs 32 \
   -linux-image ~/linux/vmlinux-2.4.20-plex86 \
