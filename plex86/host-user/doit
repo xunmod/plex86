@@ -1,0 +1,70 @@
+#! /bin/bash
+#
+#  $Id$
+#
+#  doit: start plex86 with requested parameters.
+#  Copyright (C) 1999-2003  Kevin P. Lawton
+
+  # The bootloader image is from plex86.
+setup32=../guest-kernel/linux/setup32.img
+
+  # The plex86'ified Linux kernel; result of a "make vmlinux", then a
+  # objcopy -O binary vmlinux vmlinux-2.x.x-plex86.img
+linux=/tmp/vmlinux-2.4.21-plex86.img
+#linux=~/linux/vmlinux-2.4.20-plex86
+
+  # An initial ramdisk image with ext2 filesystem; must be 1k multiple.
+initrd=/tmp/initrd-2.4.21-xapps.img
+#initrd=~/linux/initrd.2M.nfs
+
+  # Size of memory of the VM, in megabytes (2^10).
+megs=32
+
+  # Bogomips rating from your host; type "dmesg | grep -i bogomips"
+bogomips=989
+
+  # Tun/tap script file, if any.  Otherwise, you have to manually type
+  # in commands as root on another window after plex86 starts.
+#tun_script=../misc/tuntap-sample-script
+tun_script=
+
+  # If you're using an NFS root, define it here.
+#nfs_root=host-vmnet:/export/rh73
+nfs_root=
+
+#######################################################################
+
+ramdisk_size_bytes=`wc -c $initrd | cut -f 1 -d " "`
+ramdisk_size_k=$[$ramdisk_size_bytes/1024]
+ramdisk_location=$[($megs*1024*1024)-$ramdisk_size_bytes]
+if [ "x$nfs_root" == "x" ]; then
+  linux_cmdline="root=/dev/ram0 init=/linuxrc mem=nopentium rw"
+  linux_cmdline="$linux_cmdline ramdisk_size=$ramdisk_size_k bogomips=$bogomips"
+else
+  linux_cmdline="root=/dev/nfs nfsroot=$nfs_root mem=nopentium bogomips=$bogomips"
+fi
+
+# Create the -tun-script option.
+if [ "x$tun_script" == "x" ]; then
+  tun_option=
+else
+  tun_option="-tun-script $tun_script"
+fi
+
+# Sanity check that the initrd is a 1k multiple.
+sanity_bytes=$[$ramdisk_size_k*1024]
+if [ $sanity_bytes != $ramdisk_size_bytes ]; then
+  echo "Error: initrd '$initrd' is not a 1k multiple."
+  exit 1 # Fail.
+fi
+
+# Start plex86.
+./linuxvm \
+  -megs $megs \
+  -linux-image $linux \
+  -initrd-image $ramdisk_location $initrd \
+  -linux-commandline "$linux_cmdline" \
+  -bootloader-image $setup32 \
+  -dump-vga
+
+exit 0 # Succeed.
