@@ -19,10 +19,10 @@ typedef unsigned char diskParams_t[HalDiskMaxDisks][DiskParamsSizeMax];
 
 extern unsigned initHal(char *tunScript, diskParams_t *diskParams);
 extern unsigned halCall(void);
-extern unsigned tuntapReadPacketToGuest(unsigned deviceNo);
+extern void     halNetReadPacketToGuest(unsigned deviceNo);
 
-extern volatile unsigned tunTapInService;
-extern volatile unsigned tunTapEvent;
+extern volatile unsigned halNetConsumerCount; // Fixme:
+extern volatile unsigned halNetProducerCount; // Fixme:
 extern int fdTunTap;
 
 

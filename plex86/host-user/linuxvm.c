@@ -673,14 +673,8 @@ executeLinux(void)
 
 executeLoop:
 
-  if ( tunTapEvent ) { // Fixme: make this volatile?
-    if ( incrementAtomic(tunTapInService) == 1 ) {
-      //fprintf(stderr, "plex86: plex86ExecuteInVM: tunTapEvent==1.\n");
-      if ( tuntapReadPacketToGuest(0) ) {
-        tunTapEvent = 0; // Reset TUN/TAP event flag.
-        }
-      tunTapInService = 0; // Reset in-service semaphore.
-      }
+  if ( halNetConsumerCount != halNetProducerCount ) {
+    halNetReadPacketToGuest(0);
     }
 
   ret = ioctl(plex86FD, ioctlNo, ioctlMsgPtr);

@@ -40,8 +40,8 @@ static int execute_script(char *name, char* arg1);
 int fdTunTap = -1;
 static struct sigaction sa;
 
-volatile unsigned tunTapInService = 0;
-volatile unsigned tunTapEvent = 0;
+volatile unsigned halNetConsumerCount=0; // Fixme:
+volatile unsigned halNetProducerCount=0; // Fixme:
 
 
 struct {
@@ -230,16 +230,7 @@ error:
   void
 tuntapDev0SigIO(int sig) 
 {
-  if ( incrementAtomic(tunTapInService) == 1 ) {
-    // We own the in-service semaphore.
-    tunTapEvent = 1; // Signal main body that there are packets to read.
-    tunTapInService = 0; // Reset in-service semaphore.
-    }
-  else {
-    // The main thread must own the in-service semaphore.  Let it handle
-    // reading the TUN/TAP data.
-    fprintf(stderr, "tuntapDev0SigIO: did not get semaphore.\n");
-    }
+  incrementAtomic( halNetProducerCount );
 }
 
   int
@@ -336,8 +327,8 @@ initTunTap( char *scriptname )
   return(1); // OK
 }
 
-  unsigned
-tuntapReadPacketToGuest(unsigned deviceNo)
+  void
+halNetReadPacketToGuest(unsigned deviceNo)
 {
   int packetLen;
   Bit8u *rxBuffer;
@@ -382,19 +373,29 @@ fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
 // Fixme: was picIrq(HalNet0Irq, 1);
         plex86GuestCPU->halIrq = HalNet0Irq;
         }
+      else if ( (packetLen<0) && (errno==EAGAIN) ) {
+        // No data is available for read().  We have consumed all packets
+        // for now.
+        goto allPacketsConsumed;
+        }
       else if ( (packetLen<0) && ((errno!=EAGAIN) && (errno!=EINTR)) ) {
         fprintf(stderr, "tuntapReadPacketToGuest: read error.\n");
         }
       else if ( packetLen==0 ) {
         // If we have exhausted the packets from TUN/TAP, only then
         // do we flag the main body to reset tunTapEvent.
-        return 1; // OK.
+        goto allPacketsConsumed;
+        }
+      else {
+        fprintf(stderr, "halNetReadPacketToGuest: packetLen=%d, errno=%d.\n",
+                packetLen, errno);
         }
       }
     else {
-#ifdef TUNTAP_SPEW
-      fprintf(stderr, "tuntapReadPacketToGuest: buffer full.\n");
-#endif
+      // fprintf(stderr, "tuntapReadPacketToGuest: buffer full.\n");
+      // The guest Rx buffer is full for now, so we will have to process
+      // this packet later when the buffer empties.
+      goto morePacketsPossible;
       }
     }
   else {
@@ -405,51 +406,13 @@ fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
       }
     // If we have exhausted the packets from TUN/TAP, only then
     // do we flag the main body to reset tunTapEvent.
-    return 1;
-    }
-  return 0; // Do not reset tunTapEvent yet.
-
-#if 0
-  unsigned i, ret;
-  Bit8u   *macHdr, temp8;
-  Bit32u  *ipAddr, temp32;
-
-  while( (packetLen = read(fdTunTap, rxBuffer, sizeof(rxBuffer))) > 0 ) {
-    fprintf(stderr, "sig_io: read %d bytes.\n", packetLen);
-
-    // Swap ethernet source/destination addresses.
-    macHdr = (Bit8u *) (rxBuffer + 0);
-    for (i=0; i<6; i++) {
-      temp8  = macHdr[i];
-      macHdr[i] = macHdr[6 + i];
-      macHdr[6 + i] = temp8;
-      }
-
-    // Swap IP source/destination addresses.
-    ipAddr = (Bit32u *) (rxBuffer + 14 + 12);
-fprintf(stderr, "SrcIP: %02x.%02x.%02x.%02x --> "
-                "DstIP: %02x.%02x.%02x.%02x\n",
-                (ipAddr[0]>>0) & 0xff,
-                (ipAddr[0]>>8) & 0xff,
-                (ipAddr[0]>>16) & 0xff,
-                (ipAddr[0]>>24) & 0xff,
-                (ipAddr[1]>>0) & 0xff,
-                (ipAddr[1]>>8) & 0xff,
-                (ipAddr[1]>>16) & 0xff,
-                (ipAddr[1]>>24) & 0xff);
-    temp32 = ipAddr[0];
-    ipAddr[0] = ipAddr[1];
-    ipAddr[1] = temp32;
-
-    // Write the modified packet back.
-    ret = write(fdTunTap, rxBuffer, packetLen);
-    fprintf(stderr, "write(%u bytes) returns %u bytes.\n",
-            packetLen, ret);
+    goto allPacketsConsumed;
     }
 
-  if( packetLen < 0 && (errno != EAGAIN && errno != EINTR) ) {
-    bridge_term = 1;
-    return;
-    }
-#endif
+morePacketsPossible:
+  return;
+
+allPacketsConsumed:
+  incrementAtomic( halNetConsumerCount );
+  return;
 }
