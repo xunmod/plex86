@@ -10,17 +10,7 @@ fi
 #
 # 192.168.10.1    host-vmnet
 
-/sbin/ifconfig $1 hw ether 00:FF:84:8E:94:31 host-vmnet
-if [ $? != 0 ] ; then
-  exit 1
-fi
-
-
-# Load entries in the ARP cache.  My /etc/ethers looks like this:
-#
-# 0:53:4e:55:4c:30 guest-vmnet
-
-arp -f /etc/ethers
+/sbin/ifconfig $1 hw ether FE:FD:00:00:00:01 host-vmnet
 if [ $? != 0 ] ; then
   exit 1
 fi

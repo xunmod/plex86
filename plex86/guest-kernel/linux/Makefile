@@ -90,6 +90,7 @@ setup32-cmdline.o: setup32-cmdline.c
 	$(HOST_USER_CC) -c $(HOST_USER_CFLAGS) $(INC_DIRS) $<
 
 clean:
-	@/bin/rm -f *.o *.s $(DRIVER_NAMES)
+	@/bin/rm -f *.o *.s $(DRIVER_NAMES) \
+	  setup32 setup32.img setup32-cmdline
 
 dist-clean: clean

@@ -216,9 +216,8 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
     fprintf(stderr, "You must provide  an '-megs' option.\n");
     goto errorUsage;
     }
-#define MaxNMegs 32 // For now.
-  if ( (nMegs>MaxNMegs) || (nMegs&3) ) {
-    fprintf(stderr, "-megs value must be multiple of 4, up to %u.\n", MaxNMegs);
+  if ( nMegs & 3 ) {
+    fprintf(stderr, "-megs value must be multiple of 4.\n");
     goto errorUsage;
     }
   if ( linuxImagePathname[0] == 0 ) {

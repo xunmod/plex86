@@ -11,7 +11,8 @@ subdirs := vmm $(HOST_OS)
 subdirlibs := vmm/vmm.o $(HOST_OS)/$(HOST_OS).o
 
 all:
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir ; done
+	@for subdir in $(subdirs); \
+	  do if ! $(MAKE) -C $$subdir ; then break; fi; done
 	@$(MAKE) plex86.o
 ifeq ($(HOST_OS), null)
 	/bin/rm -f a.out
@@ -26,7 +27,9 @@ local-clean:
 	@/bin/rm -f *.o a.out
 
 clean: local-clean
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir clean ; done
+	@for subdir in $(subdirs); \
+	  do if ! $(MAKE) -C $$subdir clean ; then break; fi; done
 
 dist-clean: local-clean
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir dist-clean ; done
+	@for subdir in $(subdirs); \
+	  do if ! $(MAKE) -C $$subdir dist-clean ; then break; fi; done

@@ -29,7 +29,7 @@
 #include "hal-user.h"
 
 
-// #define TUNTAP_SPEW 1
+//#define TUNTAP_SPEW 1
 
 #define HalNet0Irq 3
 
@@ -199,9 +199,11 @@ halCall(void)
 #ifdef TUNTAP_SPEW
 {
 Bit8u *macHdr;
+unsigned frameType;
 macHdr = (Bit8u *) (txBuffer + 0);
+frameType = (macHdr[12]<<8) | macHdr[13];
 fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
-                "dst: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                "dst: %02x:%02x:%02x:%02x:%02x:%02x len=%u frmtype=0x%04x\n",
         macHdr[6+0],
         macHdr[6+1],
         macHdr[6+2],
@@ -213,11 +215,25 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
         macHdr[0+2],
         macHdr[0+3],
         macHdr[0+4],
-        macHdr[0+5]);
+        macHdr[0+5],
+        packetLen, frameType);
+// u8[6] ether dest addr
+// u8[6] ether src addr
+// u16   frame type (0x0806=ARP)
+// -----------------------------
+// u16 hw type=1 (ethernet)
+// u16 proto type=0x0800 (IP addr)
+// u8  hwlen=6
+// u8  proto len=4
+// u16 op (1=ARP request, 2=ARP reply)
+// u8[6] sender hw addr
+// u8[4] sender proto addr
+// u8[6] target hw addr
+// u8[4] target proto addr
 }
 #endif
       ret = write(fdTunTap, txBuffer, packetLen);
-      if ( ret != packetLen ) {
+      if ( ((unsigned)ret) != packetLen ) {
         fprintf(stderr, "HalCallNetGuestTx: write(%u) bytes to TUN/TAP "
                         " returned %d.\n", packetLen, ret);
         goto error;
@@ -384,7 +400,7 @@ initTunTap( char *scriptname )
   // IFF_TUN is for IP.
   // IFF_NO_PI is for not receiving extra meta packet information.
   ifr.ifr_flags = IFF_TAP | IFF_NO_PI;
-  strncpy(ifr.ifr_name, "tun%d", IFNAMSIZ);
+  strncpy(ifr.ifr_name, "tap%d", IFNAMSIZ);
   err = ioctl(fdTunTap, TUNSETIFF, (void *) &ifr);
   if ( err < 0 ) {
     close(fdTunTap);
@@ -445,12 +461,12 @@ tuntapReadPacketToGuest(unsigned deviceNo)
       if ( packetLen > 0 ) {
 #ifdef TUNTAP_SPEW
         Bit8u *macHdr;
-        fprintf(stderr, "tuntapReadPacketToGuest: read %d bytes to guest.\n",
-                packetLen);
+        unsigned frameType;
         macHdr = (Bit8u *) (rxBuffer + 0);
+        frameType = (macHdr[12]<<8) | macHdr[13];
 
 fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
-                "src: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                "src: %02x:%02x:%02x:%02x:%02x:%02x len=%u frmtype=0x%04x\n",
         macHdr[0+0],
         macHdr[0+1],
         macHdr[0+2],
@@ -462,8 +478,13 @@ fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
         macHdr[6+2],
         macHdr[6+3],
         macHdr[6+4],
-        macHdr[6+5]);
+        macHdr[6+5],
+        packetLen, frameType);
 #endif
+        // If packets are less than the minimum ethernet framesize, then pad.
+        // Fixme: I don't think we need to extend this.
+        if (packetLen < 60)
+          packetLen = 60; // Fixme: clear remaining bytes?
 
         halNetDev[deviceNo].guestRxArea->rxBufferFull = 1;
         halNetDev[deviceNo].guestRxArea->rxBufferLen  = packetLen;

@@ -91,17 +91,17 @@ getHostOSPinnedPage(vm_t *vm, Bit32u guestPPI)
   /* If physical page was already pinned by a previous request, nothing to do.
    * Return the host physical address of the page.
    */
-  if ( vm->pageInfo[guestPPI].attr.fields.pinned )
-    return( vm->pageInfo[guestPPI].hostPPI );
+  if ( vm->guest.addr.guestPageInfo[guestPPI].attr.fields.pinned )
+    return( vm->guest.addr.guestPageInfo[guestPPI].hostPPI );
 
   /* Page is not already pinned by the host OS.  We need to request
    * from the host OS, that this page is pinned and find the
    * physical address.
    */
   toHostPinUserPage(vm, guestPPI);
-  MonAssert(vm, vm->pageInfo[guestPPI].attr.fields.pinned );
+  MonAssert(vm, vm->guest.addr.guestPageInfo[guestPPI].attr.fields.pinned );
 
-  return( vm->pageInfo[guestPPI].hostPPI );
+  return( vm->guest.addr.guestPageInfo[guestPPI].hostPPI );
 }
 
 
@@ -187,7 +187,7 @@ getPageUsage(vm_t *vm, Bit32u ppi)
   phyPageInfo_t *pusage;
 
   MonAssert(vm, ppi < vm->pages.guest_n_pages);
-  pusage = &vm->pageInfo[ppi];
+  pusage = &vm->guest.addr.guestPageInfo[ppi];
 
   return(pusage);
 }

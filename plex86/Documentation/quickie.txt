@@ -95,18 +95,8 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
       root> chmod +x /mnt/initrd/linuxrc
       root> umount /mnt/initrd
 
-6) Edit 'host-user/doit'.  You can pass parameters to the command line by hand,
-  but I made this one-liner script to demonstrate the parameters you need.
-  Change the pathname to the '-linux-image' to point to the guest linux kernel
-  image you downloaded or built.  Change the '-initrd-image' to point to
-  the initrd image you downloaded or built.  Note the rest of the parmeters.
-  '-megs' is the size of the guest memory to allocate.  Leave this at
-  32 for now.  '-command-line' sets the parmeters which are passed to the
-  guest Linux kernel.  These are documented in the Linux kernel doc file
-  'Documentation/kernel-parameters.txt'.  Make sure that the 'ramdisk_size'
-  is the size of the initrd image in K.  The 'bogomips' parameter I added
-  as part of my kernel mods.  Use the same value as you get on your host
-  machine ("dmesg | grep -i bogomips").
+6) Edit 'host-user/doit'.  You only need to edit variables in the first
+  section.
 
 7) You need to load the TUN/TAP device on your host Linux.
 
@@ -128,7 +118,7 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
   root> insmod tun
   "Using /lib/modules/2.4.20-686/kernel/drivers/net/tun.o"
 
-8) Add /etc/hosts, /etc/ethers entries for the host/guest machines
+8) Add /etc/hosts entries for the host/guest machines
   for the new network provided by TUN/TAP.  The pre-built initrd image
   expects to use *exactly* these numbers.  The ether address is
   currently hardwired into the guest driver.  You could probably change
@@ -146,10 +136,9 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
     192.168.10.1    host-vmnet
     192.168.10.2    guest-vmnet
 
-  host's /etc/ethers:
-  ===================
-
-    0:53:4e:55:4c:30 guest-vmnet
+  For reference, the guest image is hardwired to use the ethernet address
+  FE:FD:00:00:00:02, and I use FE:FD:00:00:00:01 for the host (you'll need
+  this soon).
 
 9a) Does your X server listen for TCP connections?
 
@@ -194,17 +183,15 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
   Plex86 will ask you to configure TUN/TAP.  Open another shell, logged in
   as root and do the following each time you run plex86:
 
-  root> /sbin/ifconfig tun0 hw ether 00:FF:84:8E:94:31 host-vmnet
-  root> arp -f /etc/ethers
+  root> /sbin/ifconfig tap0 hw ether FE:FD:00:00:00:01 host-vmnet
 
   Note: A Mandrake Cooker user reported needing to mark the interface
   Note: down, then up after the hardware address is configured.  If you are
   Note: getting "device busy" errors, perhaps try this variation instead:
   Note:
-  Note:   root> /sbin/ifconfig tun0 down
-  Note:   root> /sbin/ifconfig tun0 hw ether 00:FF:84:8E:94:31 host-vmnet
-  Note:   root> /sbin/ifconfig tun0 up
-  Note:   root> arp -f /etc/ethers
+  Note:   root> /sbin/ifconfig tap0 down
+  Note:   root> /sbin/ifconfig tap0 hw ether FE:FD:00:00:00:01 host-vmnet
+  Note:   root> /sbin/ifconfig tap0 up
 
   Now you can type return in the original shell, and plex86 will continue.
 
@@ -236,4 +223,4 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
   user> xhost -guest-vmnet
   root> /plex86-path/host-kernel/linux/unload_module.sh
   root> chmod [orig-permissions] /dev/net/tun
-  root> # Revert /etc/hosts, /etc/ethers
+  root> # Revert /etc/hosts

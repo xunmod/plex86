@@ -43,9 +43,9 @@ cpuid_info_t hostCpuIDInfo;
  * no problems with SMP access.
  */
 static const selector_t nullSelector = { raw: 0 };
-static const descriptor_t nullDescriptor = {
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  };
+//static const descriptor_t nullDescriptor = {
+//  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+//  };
 
 
 
@@ -317,6 +317,18 @@ hostInitMonitor(vm_t *vm)
   hostMapMonPages(vm, &vm->pages.guest_cpu, 1, &laddr,
                   pageTable, US0, RW1, "Guest CPU State");
 
+  {
+  unsigned nPages;
+#if ANAL_CHECKS
+  hostMapBlankPage(vm, &laddr, pageTable);
+#endif
+  vm->guest.addr.guestPageInfo = (phyPageInfo_t *) (laddr - base);
+  // Fixme: nPages should be stored when allocating guestPageInfo
+  nPages = BytesToPages(sizeof(phyPageInfo_t) * vm->pages.guest_n_pages);
+  hostMapMonPages(vm, vm->pages.guestPageInfo, nPages, &laddr,
+                  pageTable, US0, RW1, "GuestPageInfo");
+  }
+
 
 #if ANAL_CHECKS
   hostMapBlankPage(vm, &laddr, pageTable);
@@ -547,14 +559,17 @@ error:
 hostInitGuestPhyMem(vm_t *vm)
 {
   unsigned i;
-  nexusMemZero(vm->pageInfo, sizeof(vm->pageInfo));
+
+  if ( !vm->host.addr.guestPageInfo ) {
+    return(1); // Error: failed sanity check.  Should not get here.
+    }
   for (i=0; i<vm->pages.guest_n_pages; i++) {
     /* For now, we start out by preallocating physical pages */
     /* for the guest, though not necessarily mapped into linear */
     /* space. */
-    vm->pageInfo[i].attr.raw = 0;
-    vm->pageInfo[i].tsc = 0;
-    vm->pageInfo[i].attr.fields.allocated = 1;
+    vm->host.addr.guestPageInfo[i].attr.raw = 0;
+    vm->host.addr.guestPageInfo[i].tsc = 0;
+    vm->host.addr.guestPageInfo[i].attr.fields.allocated = 1;
     }
  
   {
@@ -565,13 +580,13 @@ hostInitGuestPhyMem(vm_t *vm)
   rom_page = 0xf0000 >> 12;
   npages = (1 + 0xfffff - 0xf0000) / 4096;
   for (i=0; i<npages; i++)
-    vm->pageInfo[rom_page + i].attr.fields.RO = 1;
+    vm->host.addr.guestPageInfo[rom_page + i].attr.fields.RO = 1;
 
   /* Mark VGA BIOS ROM area as ReadOnly */
   rom_page = 0xc0000 >> 12;
   npages = (1 + 0xc7fff - 0xc0000) / 4096;
   for (i=0; i<npages; i++)
-    vm->pageInfo[rom_page + i].attr.fields.RO = 1;
+    vm->host.addr.guestPageInfo[rom_page + i].attr.fields.RO = 1;
   }
  
   /* Mark VGA framebuffer area as Memory Mapped IO */
@@ -582,7 +597,7 @@ hostInitGuestPhyMem(vm_t *vm)
     vga_page = 0xa0000 >> 12;
     npages = (1 + 0xbffff - 0xa0000) / 4096;
     for (i=0; i<npages; i++)
-      vm->pageInfo[vga_page + i].attr.fields.memMapIO = 1;
+      vm->host.addr.guestPageInfo[vga_page + i].attr.fields.memMapIO = 1;
     }
 
   return(0);
@@ -1513,9 +1528,7 @@ hostIoctlRegisterMem(vm_t *vm, plex86IoctlRegisterMem_t *registerMemMsg)
     return -Plex86ErrnoEBUSY;
 
   /* Check that the amount of memory is reasonable. */
-  if ( (registerMemMsg->nMegs > PLEX86_MAX_PHY_MEGS)  ||
-       (registerMemMsg->nMegs < 4) ||
-       (registerMemMsg->nMegs & 0x3) )
+  if ( registerMemMsg->nMegs & 0x3 )
     return -Plex86ErrnoEINVAL;
 
   /* Check that the guest memory vector is page aligned. */
@@ -1613,14 +1626,6 @@ hostAllocVmPages(vm_t *vm, plex86IoctlRegisterMem_t *registerMemMsg)
   pg->guest_n_megs  = registerMemMsg->nMegs;
   pg->guest_n_pages = registerMemMsg->nMegs * 256;
   pg->guest_n_bytes = registerMemMsg->nMegs * 1024 * 1024;
-  if ( pg->guest_n_pages > MAX_MON_GUEST_PAGES) {
-    /* The size of the user-space allocated guest physical memory must
-     * fit within the maximum number of guest pages that the VM monitor
-     * supports.
-     */
-    goto error;
-    }
-  where++;
 
   vm->guestPhyMemAddr = registerMemMsg->guestPhyMemVector;
   vm->vmState |= VMStateRegisteredPhyMem; /* Bogus for now. */
@@ -1776,6 +1781,59 @@ vm->vmState |= VMStateRegisteredPrintBuffer; /* For now. */
     }
   where++;
 
+  {
+  unsigned structNBytes, structNPages, pageListNBytes, pageListNPages;
+
+  // We maintain information for each physical page of guest memory.
+  structNBytes = sizeof(phyPageInfo_t) * (registerMemMsg->nMegs<<8);
+  structNPages = BytesToPages(structNBytes);
+  if ( !(ad->guestPageInfo = hostOSAllocZeroedMem(structNPages<<12)) ) {
+    goto error;
+    }
+  where++;
+
+  // For this new page info structure, we need to allocate an array of
+  // host page addresses, so we can map it into the VM monitor.
+  pageListNBytes = sizeof(Bit32u) * structNPages;
+  pageListNPages = BytesToPages(pageListNBytes);
+  if ( !(pg->guestPageInfo = hostOSAllocZeroedMem(pageListNPages<<12)) ) {
+    goto error;
+    }
+
+  // Get the physical pages associated with the new structure, and put
+  // them in the page list that we just allocated.
+  if (!hostOSGetAllocedMemPhyPages(pg->guestPageInfo, structNPages, 
+           ad->guestPageInfo, structNBytes)) {
+    goto error;
+    }
+  where++;
+
+  // We need to do a similar thing as above, for an adjunct array
+  // which is needed by the host (Linux) for page pinning.
+  structNBytes = sizeof(void *) * (registerMemMsg->nMegs<<8);
+  structNPages = BytesToPages(structNBytes);
+  if ( !(ad->guestPageInfoHostAdjunct =
+         hostOSAllocZeroedMem(structNPages<<12)) ) {
+    goto error;
+    }
+  where++;
+
+  // For this new page info structure, we need to allocate an array of
+  // host page addresses, so we can map it into the VM monitor.
+  pageListNBytes = sizeof(Bit32u) * structNPages;
+  pageListNPages = BytesToPages(pageListNBytes);
+  if ( !(pg->guestPageInfoHostAdjunct =
+         hostOSAllocZeroedMem(pageListNPages<<12)) ) {
+    goto error;
+    }
+
+  if (!hostOSGetAllocedMemPhyPages(pg->guestPageInfoHostAdjunct, structNPages, 
+           ad->guestPageInfoHostAdjunct, structNBytes)) {
+    goto error;
+    }
+  where++;
+  }
+
   /* Get the physical pages associated with the vm_t structure. */
   if (!hostOSGetAllocedMemPhyPages(pg->vm, MAX_VM_STRUCT_PAGES, vm, sizeof(*vm))) {
     goto error;
@@ -1844,6 +1902,11 @@ hostUnallocVmPages( vm_t *vm )
   /* Monitor IDT stubs */
   if (ad->idt_stubs) hostOSFreeMem(ad->idt_stubs);
 
+  // Guest Page Info.
+  if (ad->guestPageInfo) hostOSFreeMem(ad->guestPageInfo);
+  if (ad->guestPageInfoHostAdjunct) hostOSFreeMem(ad->guestPageInfoHostAdjunct);
+  if (pg->guestPageInfo) hostOSFreeMem(pg->guestPageInfo);
+  if (pg->guestPageInfoHostAdjunct) hostOSFreeMem(pg->guestPageInfoHostAdjunct);
 
   /* clear out allocated pages lists */
   nexusMemZero(pg, sizeof(*pg));
@@ -2027,10 +2090,10 @@ hostReleasePinnedUserPages(vm_t *vm)
   /* Unpin the pages associate with the guest physical memory. */
   nPages = vm->pages.guest_n_pages;
   for (ppi=0; ppi<nPages; ppi++) {
-    if ( vm->pageInfo[ppi].attr.fields.pinned ) {
+    if ( vm->host.addr.guestPageInfo[ppi].attr.fields.pinned ) {
       void *osSpecificPtr;
 
-      osSpecificPtr = (void *) vm->hostStructPagePtr[ppi];
+      osSpecificPtr = (void *) vm->host.addr.guestPageInfoHostAdjunct[ppi];
 // Fixme: Conditionalize page dirtying before page release.
       dirty = 1; /* FIXME: 1 for now. */
       hostOSUnpinUserPage(vm,
@@ -2039,7 +2102,7 @@ hostReleasePinnedUserPages(vm_t *vm)
           ppi,
           0 /* There was no host kernel addr mapped for this page. */,
           dirty);
-      vm->pageInfo[ppi].attr.fields.pinned = 0;
+      vm->host.addr.guestPageInfo[ppi].attr.fields.pinned = 0;
       }
     }
 
@@ -2090,11 +2153,11 @@ hostHandlePagePinRequest(vm_t *vm, Bit32u reqGuestPPI)
     unpinGuestPPI = vm->guestPhyPagePinQueue.ppi[qIndex];
     hostOSUnpinUserPage(vm,
         vm->guestPhyMemAddr + (unpinGuestPPI<<12),
-        vm->hostStructPagePtr[unpinGuestPPI],
+        vm->host.addr.guestPageInfoHostAdjunct[unpinGuestPPI],
         unpinGuestPPI,
         0 /* There was no host kernel addr mapped for this page. */,
         dirty);
-    vm->pageInfo[unpinGuestPPI].attr.fields.pinned = 0;
+    vm->host.addr.guestPageInfo[unpinGuestPPI].attr.fields.pinned = 0;
 // Fixme: unpinning page, calling hostInitShadowPaging for now.
 // Fixme: do something more intelligent later.
 // Also mods the tsc?
@@ -2104,7 +2167,7 @@ hostInitShadowPaging(vm);
   /* Pin the requested guest physical page in the host OS. */
   if ( !hostOSGetAndPinUserPage(vm,
             vm->guestPhyMemAddr + (reqGuestPPI<<12),
-            &vm->hostStructPagePtr[reqGuestPPI],
+            &vm->host.addr.guestPageInfoHostAdjunct[reqGuestPPI],
             &hostPPI,
             0 /* Don't need a host kernel address. */
             ) ) {
@@ -2115,8 +2178,8 @@ hostInitShadowPaging(vm);
   /* Pinning activities have succeeded.  Mark this physical page as being
    * pinned, and store it's physical address.
    */
-  vm->pageInfo[reqGuestPPI].attr.fields.pinned = 1;
-  vm->pageInfo[reqGuestPPI].hostPPI = hostPPI;
+  vm->host.addr.guestPageInfo[reqGuestPPI].attr.fields.pinned = 1;
+  vm->host.addr.guestPageInfo[reqGuestPPI].hostPPI = hostPPI;
 
   /* Now add this entry to the Q. */
   vm->guestPhyPagePinQueue.ppi[qIndex] = reqGuestPPI;

@@ -7,12 +7,13 @@
 
 include ../Rules.make
 
+GUEST_OS = linux
 
 all:
-	@if test "$(GUEST_OS)" != "none"; then $(MAKE) -C $(GUEST_OS); fi
+	@$(MAKE) -C $(GUEST_OS)
 
 clean:
-	@if test "$(GUEST_OS)" != "none"; then $(MAKE) -C $(GUEST_OS) clean; fi
+	@$(MAKE) -C $(GUEST_OS) clean
 
 dist-clean: 
-	@if test "$(GUEST_OS)" != "none"; then $(MAKE) -C $(GUEST_OS) dist-clean; fi
+	@$(MAKE) -C $(GUEST_OS) dist-clean

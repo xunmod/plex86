@@ -126,6 +126,8 @@ static unsigned halNetGuestTx(unsigned device, unsigned packetPhyAddr,
 static unsigned halNetGuestRegDev(unsigned device, unsigned rxAreaPAddr,
                                   unsigned rxAreaLen);
 
+// Fixme: deal with checksumming
+
 /*
  * Open and close
  */
@@ -141,13 +143,13 @@ int snull_open(struct net_device *dev)
     return 1; // Fixme:
     }
 
-  /* 
-   * Assign the hardware address of the board: use "\0SNULx", where
-   * x is 0 or 1. The first byte is '\0' to avoid being a multicast
-   * address (the first byte of multicast addrs is odd).
-   */
-  memcpy(dev->dev_addr, "\0SNUL0", ETH_ALEN);
-  dev->dev_addr[ETH_ALEN-1] += (dev - snull_devs); /* the number */
+  printk("snull_open: dev_addr=%x:%x:%x:%x:%x:%x.\n",
+         dev->dev_addr[0],
+         dev->dev_addr[1],
+         dev->dev_addr[2],
+         dev->dev_addr[3],
+         dev->dev_addr[4],
+         dev->dev_addr[5]);
 
   netif_start_queue(dev);
   return 0;
@@ -284,6 +286,7 @@ void snull_hw_tx(char *buf, int len, struct net_device *dev)
         printk(" %02x",buf[i]&0xff);
     printk("\n");
     }
+
   /*
    * Ethhdr is 14 bytes, but the kernel arranges for iphdr
    * to be aligned (i.e., ethhdr is unaligned)
@@ -320,24 +323,6 @@ printk("saddr offset = %u, daddr offset = %u.\n",
          ethHdr->h_dest[5]);
   }
 #endif
-
-#if 0
-  // Reverse source/destination address by swapping 4th octet (Class C).
-  {
-  u8 temp;
-  temp = ((u8 *)saddr)[3];
-  ((u8 *)saddr)[3] = ((u8 *)daddr)[3];
-  ((u8 *)daddr)[3] = temp;
-
-  // Reverse ethernet (MAC) address.
-  temp = ethHdr->h_source[5];
-  ethHdr->h_source[5] = ethHdr->h_dest[5];
-  ethHdr->h_dest[5] = temp;
-  }
-#endif
-
-  ih->check = 0;         /* and rebuild the checksum (ip needs it) */
-  ih->check = ip_fast_csum((unsigned char *)ih,ih->ihl);
 
   if (dev == snull_devs)
       PDEBUGG("%08x:%05i --> %08x:%05i\n",
@@ -404,6 +389,7 @@ printk("saddr offset = %u, daddr offset = %u.\n",
       snull_interrupt(0, dev, NULL);
 #endif
 }
+
 
 /*
  * Transmit a packet (called by the kernel)

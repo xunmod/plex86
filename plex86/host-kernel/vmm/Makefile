@@ -14,7 +14,8 @@ subdirlibs := \
     nexus-space/nexus-space.o
 
 all:
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir ; done
+	@for subdir in $(subdirs); \
+	  do if ! $(MAKE) -C $$subdir ; then break; fi; done
 	@$(MAKE) vmm.o
 
 vmm.o: $(subdirlibs)
@@ -24,7 +25,9 @@ local-clean:
 	@/bin/rm -f *.o
 
 clean: local-clean
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir clean ; done
+	@for subdir in $(subdirs); \
+	  do if ! $(MAKE) -C $$subdir clean ; then break; fi; done
 
 dist-clean: local-clean
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir dist-clean ; done
+	@for subdir in $(subdirs); \
+	  do if ! $(MAKE) -C $$subdir dist-clean ; then break; fi; done

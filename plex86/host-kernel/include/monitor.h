@@ -167,14 +167,66 @@ typedef struct {
 #define MON_IDT_STUBS_PAGES BytesToPages(MON_IDT_STUBS_SIZE)
 #define MON_TSS_PAGES       BytesToPages(MON_TSS_SIZE)
 
-#define MAX_MON_GUEST_PAGES    (PLEX86_MAX_PHY_MEGS * 256)
-/* +++ MON_PAGE_TABLES is kind of random */
+// fixme: #define MAX_MON_GUEST_PAGES    (PLEX86_MAX_PHY_MEGS * 256)
+// fixme: MON_PAGE_TABLES is kind of random.
 #define MON_PAGE_TABLES    (10*((PLEX86_MAX_PHY_MEGS+3) >> 2))
 
 #define MAX_VM_STRUCT_PAGES (68)
 
 #define LOG_BUFF_PAGES 1
 #define LOG_BUFF_SIZE  ((LOG_BUFF_PAGES)*4096)
+
+/* These bits define the possible usage and attributes assigned */
+/* to a particular guest physical page.  These are useful for keeping */
+/* track of what kinds of system structures are contained in a page */
+/* at a given time, and if the page has associated cached code */
+/* information in the prescan logic.  We can also tag particular */
+/* pages with other more static attributes. */
+
+typedef union {
+  struct {
+    Bit32u spare0:7;          /* (spare) */
+    Bit32u memMapIO:1;        /* MemMapIO */
+    Bit32u RO:1;              /* RO */
+    Bit32u allocated:1;       /* Allocated */
+    Bit32u pinned:1;          /* Pinned by host OS. */
+    Bit32u spare1:21;         /* (spare) */
+    } __attribute__ ((packed)) fields;
+  Bit32u raw;
+  } __attribute__ ((packed)) phy_page_attr_t;
+
+typedef struct {
+  phy_page_attr_t attr;
+  Bit64u tsc; /* for comparing to CR3 timestamp counter */
+
+  Bit32u hostPPI;
+  } __attribute__ ((packed)) phyPageInfo_t;
+
+/* Bitmasks to access fields in structure above. */
+#define PageUsageMemMapIO         0x080
+#define PageUsageRO               0x100
+#define PageUsageAllocated        0x200
+#define PageUsageSwappable        0x400
+
+/* Group of attributes which are not compatible with a Page Table */
+/* occupying a physical page. */
+#define PageBadUsage4PTbl \
+  ( PageUsageMemMapIO | PageUsageRO )
+
+/* Group of attributes which are not compatible with a Page Directory */
+/* occupying a physical page.  Keep in mind, when the PDir is marked, */
+/* no other dynamic bits will be set. */
+#define PageBadUsage4PDir \
+  ( PageUsageMemMapIO | PageUsageRO )
+
+#define PageUsageCausesNA \
+  ( PageUsageMemMapIO )
+#define PageUsageCausesRO \
+  ( PageUsageRO )
+
+#define PDEUnhandled 0x000001d8
+#define PTEUnhandled 0x00000198
+
 
 /*
  *  Pages allocated for the VM by the host kernel driver.
@@ -230,6 +282,9 @@ typedef struct {
   Bit32u ldt[MON_LDT_PAGES];
   Bit32u tss[MON_TSS_PAGES];
   Bit32u idt_stubs[MON_IDT_STUBS_PAGES];
+
+  Bit32u *guestPageInfo; // Dynamically allocated array.
+  Bit32u *guestPageInfoHostAdjunct; // Dynamically allocated array.
   } vm_pages_t;
 
 
@@ -255,59 +310,11 @@ typedef struct {
   descriptor_t *ldt;
   tss_t        *tss;
   idt_stub_t   *idt_stubs;
+
+  phyPageInfo_t *guestPageInfo;
+  void         **guestPageInfoHostAdjunct;
   } vm_addr_t;
 
-
-/* These bits define the possible usage and attributes assigned */
-/* to a particular guest physical page.  These are useful for keeping */
-/* track of what kinds of system structures are contained in a page */
-/* at a given time, and if the page has associated cached code */
-/* information in the prescan logic.  We can also tag particular */
-/* pages with other more static attributes. */
-
-typedef union {
-  struct {
-    Bit32u spare0:7;          /* (spare) */
-    Bit32u memMapIO:1;        /* MemMapIO */
-    Bit32u RO:1;              /* RO */
-    Bit32u allocated:1;       /* Allocated */
-    Bit32u pinned:1;          /* Pinned by host OS. */
-    Bit32u spare1:21;         /* (spare) */
-    } __attribute__ ((packed)) fields;
-  Bit32u raw;
-  } __attribute__ ((packed)) phy_page_attr_t;
-
-typedef struct {
-  phy_page_attr_t attr;
-  Bit64u tsc; /* for comparing to CR3 timestamp counter */
-
-  Bit32u hostPPI;
-  } __attribute__ ((packed)) phyPageInfo_t;
-
-/* Bitmasks to access fields in structure above. */
-#define PageUsageMemMapIO         0x080
-#define PageUsageRO               0x100
-#define PageUsageAllocated        0x200
-#define PageUsageSwappable        0x400
-
-/* Group of attributes which are not compatible with a Page Table */
-/* occupying a physical page. */
-#define PageBadUsage4PTbl \
-  ( PageUsageMemMapIO | PageUsageRO )
-
-/* Group of attributes which are not compatible with a Page Directory */
-/* occupying a physical page.  Keep in mind, when the PDir is marked, */
-/* no other dynamic bits will be set. */
-#define PageBadUsage4PDir \
-  ( PageUsageMemMapIO | PageUsageRO )
-
-#define PageUsageCausesNA \
-  ( PageUsageMemMapIO )
-#define PageUsageCausesRO \
-  ( PageUsageRO )
-
-#define PDEUnhandled 0x000001d8
-#define PTEUnhandled 0x00000198
 
 
 
@@ -396,18 +403,6 @@ typedef struct {
   Bit32u mon_pde_mask; /* Upper 10 bits of monitor lin addr space */
   Bit32u mon_pdi;      /* Same value shifted down 22 bits. */
   Bit64u vpaging_tsc; /* time stamp of last page mappings flush */
-
-  /* We need to keep track of what each of the guest's physical */
-  /* pages contains, and maintain some additional attributes. */
-  /* We determine which kinds of information reside in the page, */
-  /* dynamically. */
-  phyPageInfo_t pageInfo[MAX_MON_GUEST_PAGES];
-
-  /* This is a hack for now.  I need to store the "struct page *"
-   * information returned by get_user_pages() in the Linux kernel.
-   * Should clean this up.
-   */
-  void  *hostStructPagePtr[MAX_MON_GUEST_PAGES];
 
   /* A revolving queue, which stores information on guest physical memory
    * pages which are currently pinned.  Only a certain number of pages

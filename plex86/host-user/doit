@@ -10,7 +10,8 @@ setup32=../guest-kernel/linux/setup32.img
 
   # The plex86'ified Linux kernel; result of a "make vmlinux", then a
   # objcopy -O binary vmlinux vmlinux-2.x.x-plex86.img
-linux=/tmp/vmlinux-2.4.21-plex86.img
+linux=/tmp/vmlinux-2.4.21-2-plex86.img
+#linux=/tmp/vmlinux-2.4.21-plex86.img
 #linux=~/linux/vmlinux-2.4.20-plex86
 
   # An initial ramdisk image with ext2 filesystem; must be 1k multiple.
@@ -18,7 +19,8 @@ initrd=/tmp/initrd-2.4.21-xapps.img
 #initrd=~/linux/initrd.2M.nfs
 
   # Size of memory of the VM, in megabytes (2^10).
-megs=32
+#megs=32
+megs=64
 
   # Bogomips rating from your host; type "dmesg | grep -i bogomips"
 bogomips=989
@@ -32,11 +34,20 @@ tun_script=
 #nfs_root=host-vmnet:/export/rh73
 nfs_root=
 
+dump_vga=
+#dump_vga=-dump-vga
+
 #######################################################################
 
+# The initial ramdisk image is loaded at the end of the VM physical
+# memory.  This is calculated for you, based on the size of the image.
 ramdisk_size_bytes=`wc -c $initrd | cut -f 1 -d " "`
 ramdisk_size_k=$[$ramdisk_size_bytes/1024]
 ramdisk_location=$[($megs*1024*1024)-$ramdisk_size_bytes]
+
+# The following options are passed to the Linux kernel.  If you need others,
+# you can find them documented in the kernel source tree in a file
+# named 'Documentation/kernel-parameters.txt'.
 if [ "x$nfs_root" == "x" ]; then
   linux_cmdline="root=/dev/ram0 init=/linuxrc mem=nopentium rw"
   linux_cmdline="$linux_cmdline ramdisk_size=$ramdisk_size_k bogomips=$bogomips"
@@ -65,6 +76,6 @@ fi
   -initrd-image $ramdisk_location $initrd \
   -linux-commandline "$linux_cmdline" \
   -bootloader-image $setup32 \
-  -dump-vga
+  $dump_vga
 
 exit 0 # Succeed.
