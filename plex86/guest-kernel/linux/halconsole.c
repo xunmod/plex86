@@ -238,7 +238,7 @@ halConGuestWrite(unsigned device, unsigned len)
 {
   unsigned result;
 
-  asm volatile (
+  __asm__ volatile (
     "int $0xff"
     : "=a" (result)
     : "0" (HalCallConGuestWrite),
@@ -254,7 +254,7 @@ halConGuestRegDev(unsigned device, unsigned rwAreaPAddr, unsigned rwAreaLen)
   unsigned result;
 
   printk("halConGuestRegDev: buffer addr = 0x%x.\n", rwAreaPAddr);
-  asm volatile (
+  __asm__ volatile (
     "int $0xff"
     : "=a" (result)
     : "0" (HalCallConGuestRegDev),

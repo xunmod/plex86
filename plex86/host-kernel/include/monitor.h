@@ -519,7 +519,7 @@ int   nexusVsnprintf(char *str, unsigned size, const char *fmt,
   static __inline__ Bit64u
 vm_rdtsc(void) {
   Bit64u ret;
-  asm volatile (
+  __asm__ volatile (
     "rdtsc"
     : "=A" (ret)
     );
@@ -542,7 +542,7 @@ vm_rdtsc(void) {
  */
 
 #define soft_int(n)                             \
-    asm volatile (                              \
+    __asm__ volatile (                              \
         "    movb %b0, __soft_int_vector \n\t"  \
         "    jmp __soft_int_n            \n\t"  \
         "__soft_int_n:                   \n\t"  \
@@ -563,10 +563,10 @@ vm_rdtsc(void) {
 #define Plex86ErrnoEAGAIN     6
 
 #define vm_save_flags(x) \
-  asm volatile("pushfl ; popl %0": "=g" (x): :"memory")
+  __asm__ volatile("pushfl ; popl %0": "=g" (x): :"memory")
 
 #define vm_restore_flags(x) \
-  asm volatile("pushl %0 ; popfl": :"g" (x): "memory", "cc")
+  __asm__ volatile("pushl %0 ; popfl": :"g" (x): "memory", "cc")
 
 
 int      hostInitMonitor(vm_t *);
@@ -609,6 +609,8 @@ void     hostOSModuleCountReset(vm_t *vm, void *inode, void *filp);
 void     hostOSInstrumentIntRedirCount(unsigned interruptVector);
 unsigned long hostOSCopyFromUser(void *to, void *from, unsigned long len);
 unsigned long hostOSCopyToUser(void *to, void *from, unsigned long len);
+unsigned long hostOSCopyFromUserIoctl(void *to, void *from, unsigned long len);
+unsigned long hostOSCopyToUserIoctl(void *to, void *from, unsigned long len);
 
 #endif  /* HOST Space */
 
@@ -655,7 +657,7 @@ void virtualize_lconstruct(vm_t *, Bit32u l0, Bit32u l1, unsigned perm);
 
 unsigned getMonPTi(vm_t *, unsigned pdi, unsigned source);
 #define invlpg_mon_offset(mon_offset) \
-  asm volatile ("invlpg (%0)": :"r" (mon_offset): "memory")
+  __asm__ volatile ("invlpg (%0)": :"r" (mon_offset): "memory")
 
 /* For now nothing, but we should conditionally compile in code
  * to panic when the expression is not true.
@@ -666,8 +668,8 @@ unsigned getMonPTi(vm_t *, unsigned pdi, unsigned source);
     monpanic(vm, "Assertion (%s) failed at %s:%u", \
              #expression, __FILE__, __LINE__)
 
-#define CLI() asm volatile ("cli": : : "memory")
-#define STI() asm volatile ("sti": : : "memory")
+#define CLI() __asm__ volatile ("cli": : : "memory")
+#define STI() __asm__ volatile ("sti": : : "memory")
 
 void doGuestFault(vm_t *, unsigned fault, unsigned errorCode);
 

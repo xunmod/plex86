@@ -638,7 +638,7 @@ halNetGuestTx(unsigned device, unsigned packetPhyAddr, unsigned len)
 {
   unsigned result;
 
-  asm volatile (
+  __asm__ volatile (
     "int $0xff"
     : "=a" (result)
     : "0" (HalCallNetGuestTx),
@@ -655,7 +655,7 @@ halNetGuestRegDev(unsigned device, unsigned rxAreaPAddr, unsigned rxAreaLen)
   unsigned result;
 
   printk("halNetGuestRegDev: buffer addr = 0x%x.\n", rxAreaPAddr);
-  asm volatile (
+  __asm__ volatile (
     "int $0xff"
     : "=a" (result)
     : "0" (HalCallNetGuestRegDev),
