@@ -2,7 +2,7 @@
 //// $Id$
 /////////////////////////////////////////////////////////////////////////
 ////
-////  Copyright (C) 2003  Kevin P. Lawton
+////  Copyright (C) 2004 Kevin P. Lawton
 
 
 #define BootCodeDesc .long 0x0000ffff ; .long 0x00cf9b00

@@ -3,7 +3,7 @@
  ************************************************************************
  *
  *  plex86: run multiple x86 operating systems concurrently
- *  Copyright (C) 1999-2003  Kevin P. Lawton
+ *  Copyright (C) 1999-2004 Kevin P. Lawton
  *
  *  descriptor.h: defines for descriptors and selectors
  */

@@ -2,7 +2,7 @@
 //// $Id$
 /////////////////////////////////////////////////////////////////////////
 ////
-////  Copyright (C) 2003  Kevin P. Lawton
+////  Copyright (C) 2004 Kevin P. Lawton
 
 
 // This is a simple bootloader for Linux, which works strictly in

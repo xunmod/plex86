@@ -1,7 +1,7 @@
 /*
  *  $Id$
  *
- *  Copyright (C) 2003 Kevin P. Lawton
+ *  Copyright (C) 2003-2004 Kevin P. Lawton
  *
  *  halconsole.c: HAL console for a guest Linux.
  */

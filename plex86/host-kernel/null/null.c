@@ -2,7 +2,7 @@
  *  $Id$
  *
  *  plex86: run multiple x86 operating systems concurrently
- *  Copyright (C) 1999-2003 Kevin P. Lawton
+ *  Copyright (C) 1999-2004 Kevin P. Lawton
  *
  *  null.c: host OS specific stubs.  These provide a reference for
  *    ports of plex86 to various host OSes.

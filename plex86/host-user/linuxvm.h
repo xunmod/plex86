@@ -2,7 +2,7 @@
 //// $Id$
 ///////////////////////////////////////////////////////////////////////////
 ////
-////  Copyright (C) 2003  Kevin P. Lawton
+////  Copyright (C) 2004 Kevin P. Lawton
 
 #ifndef __LINUXVM_H__
 #define __LINUXVM_H__

@@ -3,7 +3,7 @@
 #  $Id$
 #
 #  doit: start plex86 with requested parameters.
-#  Copyright (C) 1999-2003  Kevin P. Lawton
+#  Copyright (C) 1999-2004 Kevin P. Lawton
 
   # The bootloader image is from plex86.
 setup32=../guest-kernel/linux/setup32.img

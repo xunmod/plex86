@@ -2,7 +2,7 @@
  *  $Id$
  *
  *  plex86: run multiple x86 operating systems concurrently
- *  Copyright (C) 2003 Kevin P. Lawton
+ *  Copyright (C) 2004 Kevin P. Lawton
  *
  *  hal.h: Hardware Abstraction Layer interface.
  */
