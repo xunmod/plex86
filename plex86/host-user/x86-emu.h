@@ -18,31 +18,34 @@
 ////  License along with this library; if not, write to the Free Software
 ////  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 
-#ifndef __LINUXVM_H__
-#define __LINUXVM_H__
+
+// NOTES:
+//   Updating segment descriptor A bits upon descriptor load.
+//   Clean assertRF passed to doInterrupt()
+//   Check that all uses of translateLinToPhy() check for LinAddrNotAvailable
 
 
-// ========
-// Typedefs
-// ========
-typedef Bit32u phyAddr_t;
+// ===================
+// Defines / typesdefs
+// ===================
 
-// =========
-// Functions
-// =========
+#define PageSize 4096
 
-extern unsigned plex86TearDown(void);
+typedef struct {
+  Bit32u low;
+  Bit32u high;
+  } __attribute__ ((packed)) gdt_entry_t ;
+
+
+// ===================
+// Function prototypes
+// ===================
+
+extern unsigned  doGuestFault(unsigned fault, unsigned errorCode);
+extern void      doInterrupt(unsigned vector, unsigned intFlags,
+                             Bit32u errorCode);
 
 
 // =========
 // Variables
 // =========
-
-extern Bit8u       *plex86MemPtr;
-extern size_t       plex86MemSize;
-extern guest_cpu_t *plex86GuestCPU;
-extern Bit64u       tsc;
-extern cpuid_info_t guestCPUID;
-
-
-#endif  // __LINUXVM_H__

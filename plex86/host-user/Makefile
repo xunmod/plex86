@@ -25,7 +25,7 @@ INC_DIRS = -I../include
 .c.o:
 	$(HOST_USER_CC) -c $(HOST_USER_CFLAGS) $(INC_DIRS) $<
 
-$(EXE): linuxvm.o io.o hal-user.o
+$(EXE): linuxvm.o io.o hal-user.o x86-emu.o
 	$(HOST_USER_CC) -o $@ $^
 
 clean: 
