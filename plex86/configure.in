@@ -3,7 +3,7 @@ dnl // $Id$
 dnl // Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.4)
-AC_INIT(COPYING)
+AC_INIT(LICENSE)
 AC_CONFIG_HEADER(include/config.h)
 
 changequote(<<, >>)
