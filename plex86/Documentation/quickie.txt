@@ -151,7 +151,26 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
 
     0:53:4e:55:4c:30 guest-vmnet
 
-9) Let the guest Linux access your X desktop:
+9a) Does your X server listen for TCP connections?
+
+  If you can not run any X apps like this:
+
+    xterm -display localhost:0.0
+
+  then it is possible that your X server was started with the
+  '-nolisten tcp' option.  For example, on my Debian system, the
+  '/usr/bin/X11/startx' script runs by default, the script
+  '/usr/X11R6/lib/X11/xinit/xserverrc' if '.xserverrc' does not
+  exist in the user home directory.  It looks like this:
+
+    #!/bin/sh
+    exec /usr/bin/X11/X -dpi 100 -nolisten tcp
+
+  I copied this to '~/.xserverrc' (must be executable), eliminated the
+  '-nolisten tcp' option and restarted X.  That did the job.  You may
+  want to add the option back after testing plex86 for security.
+
+9b) Let the guest Linux access your X desktop:
 
   user> xhost +guest-vmnet
 
