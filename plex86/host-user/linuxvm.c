@@ -139,8 +139,6 @@ static unsigned char kernelCommandLine[KernelCommandLineMax];
 static unsigned      plex86State = 0;
 static int           plex86FD = -1;
 
-       Bit64u   tsc = 0;
-
 static unsigned vgaDump = 0;
 
 

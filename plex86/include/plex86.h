@@ -92,6 +92,15 @@ typedef struct {
 #define ExceptionMF  16
 #define ExceptionAC  17
 
+#define MSR_IA32_SYSENTER_CS    0x174
+#define MSR_IA32_SYSENTER_ESP   0x175
+#define MSR_IA32_SYSENTER_EIP   0x176
+
+typedef struct {
+  Bit32u cs;
+  Bit32u eip;
+  Bit32u esp;
+  } sysEnter_t;
 
 typedef union {
   Bit32u raw;
@@ -188,6 +197,9 @@ typedef struct {
   cr4_t cr4;
   unsigned a20Enable;
   unsigned INTR;
+
+  sysEnter_t sysEnter;
+  Bit64u     tsc;
   } __attribute__ ((packed)) guest_cpu_t;
 
 

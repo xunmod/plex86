@@ -16,6 +16,7 @@
 //   Check that all uses of translateLinToPhy() check for LinAddrNotAvailable
 //   Make sure that linear accesses modify guest page table A&D bits properly.
 //   Change guest_cpu_t and others to guestCpu_t
+//   Need checks for 32-bit-span base/limit everywhere segments are reloaded.
 
 
 // ===================
@@ -27,9 +28,7 @@
 #define IntFlagAssertRF  2
 #define IntFlagSoftInt   4
 
-#define MSR_IA32_SYSENTER_CS    0x174
-#define MSR_IA32_SYSENTER_ESP   0x175
-#define MSR_IA32_SYSENTER_EIP   0x176
+#define FetchDescUpdateBusyBit 1
 
 #define EIP vm->guest.addr.guestStackContext->eip
 #define CPL vm->guestCPL
@@ -46,12 +45,6 @@ typedef struct {
   unsigned scale;
   } modRM_t;
 
-typedef struct {
-  Bit32u cs;
-  Bit32u eip;
-  Bit32u esp;
-  } sysEnter_t;
-
 
 // ===================
 // Function prototypes
@@ -60,21 +53,22 @@ typedef struct {
 static unsigned  emulateSysInstr(vm_t *);
 static void      emulateUserInstr(vm_t *);
 //static unsigned  setCRx(vm_t *, unsigned crx, Bit32u val32);
-//static unsigned  setDRx(unsigned drx, Bit32u val32);
+static unsigned  setDRx(vm_t *, unsigned drx, Bit32u val32);
 static phyAddr_t translateLinToPhy(vm_t *, Bit32u lAddr);
 static unsigned  decodeModRM(vm_t *, Bit8u *opcodePtr, modRM_t *modRMPtr);
 static unsigned  loadGuestSegment(vm_t *, unsigned sreg, selector_t selector);
 static Bit32u    getGuestDWord(vm_t *, Bit32u lAddr);
 static Bit16u    getGuestWord(vm_t *, Bit32u lAddr);
 static void      writeGuestDWord(vm_t *vm, Bit32u lAddr, Bit32u val);
-static descriptor_t *fetchGuestDescBySel(vm_t *, selector_t, descriptor_t *);
+static descriptor_t *fetchGuestDescBySel(vm_t *, selector_t, descriptor_t *,
+                                         unsigned flags);
 static descriptor_t *fetchGuestDescByLAddr(vm_t *, Bit32u laddr,
                                            descriptor_t *desc);
 //static unsigned  inp(unsigned iolen, unsigned port);
 //static void      outp(unsigned iolen, unsigned port, unsigned val);
 
 //static void      doIRET(void);
-//static unsigned  doWRMSR(void);
+static unsigned  doWRMSR(vm_t *vm);
 static void      doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags,
                                   Bit32u errorCode);
 
@@ -102,7 +96,6 @@ typedef struct {
 // Variables
 // =========
 
-//static sysEnter_t sysEnter;
 
 static const unsigned dataSReg[4] = { SRegES, SRegDS, SRegFS, SRegGS };
 //static descriptor_t nullDesc = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -338,7 +331,7 @@ fetch16:
 decodeOpcode:
 
   b0 = opcode[iLen++];
-  // fprintf(stderr, "instruction @ addr=0x%x is 0x%x\n", pAddr, b0);
+  // monprint(vm, "instruction @ addr=0x%x is 0x%x\n", pAddr, b0);
   switch (b0) {
     case 0x0f: // 2-byte escape.
       {
@@ -352,71 +345,63 @@ decodeOpcode:
           switch (modRM.nnn) {
             case 2: // LLDT_Ew
               {
-return 0; // defer to user space implementation for now.
-#if 0
               selector_t selector;
 
               if (modRM.mod==3)
-                selector.raw = plex86GuestCPU->genReg[modRM.rm];
+                selector.raw = GenReg(vm, modRM.rm);
               else
-                selector.raw = getGuestWord(modRM.addr);
+                selector.raw = getGuestWord(vm, modRM.addr);
               if ( (selector.raw & 0xfffc) == 0 ) {
-                plex86GuestCPU->ldtr.sel = selector;
-                plex86GuestCPU->ldtr.valid = 0;
+                guestCpu->ldtr.sel = selector;
+                guestCpu->ldtr.valid = 0;
                 goto advanceInstruction;
                 }
-              fprintf(stderr, "emulateSysIntr: LLDT: forcing selector null.\n");
-              plex86GuestCPU->ldtr.sel.raw = 0; // Make it null anyways.
-              plex86GuestCPU->ldtr.valid = 0;
+              monprint(vm, "emulateSysIntr: LLDT: forcing selector null.\n");
+              guestCpu->ldtr.sel.raw = 0; // Make it null anyways.
+              guestCpu->ldtr.valid = 0;
               goto advanceInstruction;
-#endif
               }
 
             case 3: // LTR_Ew
               {
-return 0; // defer to user space implementation for now.
-#if 0
               selector_t    tssSelector;
-              descriptor_t *tssDescriptorPtr;
+              descriptor_t  tssDesc, *tssDescPtr;
               Bit32u tssLimit;
 
               if (modRM.mod==3)
-                tssSelector.raw = plex86GuestCPU->genReg[modRM.rm];
+                tssSelector.raw = GenReg(vm, modRM.rm);
               else
-                tssSelector.raw = getGuestWord(modRM.addr);
+                tssSelector.raw = getGuestWord(vm, modRM.addr);
               if ( (tssSelector.raw & 0xfffc) == 0 ) {
-                plex86GuestCPU->tr.sel = tssSelector;
-                plex86GuestCPU->tr.valid = 0;
+                guestCpu->tr.sel = tssSelector;
+                guestCpu->tr.valid = 0;
                 goto advanceInstruction;
                 }
               if ( tssSelector.raw & 4 ) {
-                fprintf(stderr, "LTR_Ew: selector.ti=1.\n");
+                monpanic(vm, "LTR_Ew: selector.ti=1.\n");
                 return 0;
                 }
-              tssDescriptorPtr = fetchGuestDescBySel(vm, tssSelector);
-              if ( !tssDescriptorPtr ) {
-                fprintf(stderr, "LTR_Ew: bad descriptor.\n");
+              tssDescPtr = fetchGuestDescBySel(vm, tssSelector, &tssDesc,
+                                               FetchDescUpdateBusyBit);
+              if ( !tssDescPtr ) {
+                monpanic(vm, "LTR_Ew: descriptor fetch failed.\n");
                 return 0;
                 }
-              tssLimit = (tssDescriptorPtr->limit_high<<16) |
-                          tssDescriptorPtr->limit_low;
-              if (tssDescriptorPtr->g)
+              tssLimit = (tssDesc.limit_high<<16) |
+                          tssDesc.limit_low;
+              if (tssDesc.g)
                 tssLimit = (tssLimit<<12) | 0xfff;
-              if ( (tssDescriptorPtr->p==0) ||
-                   (tssDescriptorPtr->type!=9) ||
+              if ( (tssDesc.p==0) ||
+                   (tssDesc.type!=9) ||
                    (tssLimit<103) ) {
-                fprintf(stderr, "LTR_Ew: bad descriptor.\n");
+                monpanic(vm, "LTR_Ew: bad descriptor.\n");
                 return 0;
                 }
-              plex86GuestCPU->tr.sel = tssSelector;
-              plex86GuestCPU->tr.des = *tssDescriptorPtr;
-              plex86GuestCPU->tr.des.type |= 2; // Set busy bit.
-              plex86GuestCPU->tr.valid = 1;
-
-              // Write descriptor back to memory to update busy bit.
-              tssDescriptorPtr->type |= 2;
+              guestCpu->tr.sel = tssSelector;
+              guestCpu->tr.des = tssDesc;
+              guestCpu->tr.des.type |= 2; // Set busy bit.
+              guestCpu->tr.valid = 1;
               goto advanceInstruction;
-#endif
               }
 
             default:
@@ -427,7 +412,7 @@ return 0; // defer to user space implementation for now.
         case 0x01: // Group7
           {
           iLen += decodeModRM(vm, &opcode[iLen], &modRM);
-// fprintf(stderr, "emulateSysIntr: G7: nnn=%u\n", modRM.nnn);
+// monprint(vm, "emulateSysIntr: G7: nnn=%u\n", modRM.nnn);
           switch (modRM.nnn) {
             case 2: // LGDT_Ms
               {
@@ -437,41 +422,40 @@ return 0; // defer to user space implementation for now.
               Bit16u   limit16;
 
               if (modRM.mod==3) { // Must be a memory reference.
-                fprintf(stderr, "LGDT_Ms: mod=3.\n");
+                monprint(vm, "LGDT_Ms: mod=3.\n");
                 return 0;
                 }
               limit16 = getGuestWord(modRM.addr);
               base32  = getGuestDWord(modRM.addr+2);
               plex86GuestCPU->gdtr.base  = base32;
               plex86GuestCPU->gdtr.limit = limit16;
-fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
+monprint(vm, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
               goto advanceInstruction;
 #endif
               }
+
             case 3: // LIDT_Ms
               {
-return 0; // defer to user space implementation for now.
-#if 0
               Bit32u   base32;
               Bit16u   limit16;
 
               if (modRM.mod==3) { // Must be a memory reference.
-                fprintf(stderr, "LIDT_Ms: mod=3.\n");
+                monpanic(vm, "LIDT_Ms: mod=3.\n");
                 return 0;
                 }
-              limit16 = getGuestWord(modRM.addr);
-              base32  = getGuestDWord(modRM.addr+2);
-              plex86GuestCPU->idtr.base  = base32;
-              plex86GuestCPU->idtr.limit = limit16;
+              limit16 = getGuestWord(vm, modRM.addr);
+              base32  = getGuestDWord(vm, modRM.addr+2);
+              guestCpu->idtr.base  = base32;
+              guestCpu->idtr.limit = limit16;
               goto advanceInstruction;
-#endif
               }
+
             case 7: // INVLPG
               {
 return 0; // defer to user space implementation for now.
 #if 0
               if (modRM.mod==3) { // Must be a memory reference.
-                fprintf(stderr, "INVLPG: mod=3.\n");
+                monprint(vm, "INVLPG: mod=3.\n");
                 return 0;
                 }
               // Fixme: must act on this when this code goes in the VMM.
@@ -500,30 +484,28 @@ return 0; // defer to user space implementation for now.
 
         case 0x20: // MOV_RdCd
           {
-return 0; // defer to user space implementation for now.
-#if 0
           unsigned modrm, rm, nnn;
           Bit32u   val32;
-// Fix this fetch.
+
+// Fixme: use decodeModRM()
           modrm = opcode[iLen++];
           rm   = modrm & 7;
           nnn  = (modrm>>3) & 7;
           if ( (modrm & 0xc0) != 0xc0 ) {
-            fprintf(stderr, "MOV_RdCd: mod field not 11b.\n");
+            monpanic(vm, "MOV_RdCd: mod field not 11b.\n");
             return 0;
             }
           switch (nnn) {
-            case 0: val32 = plex86GuestCPU->cr0.raw; break;
-            case 2: val32 = plex86GuestCPU->cr2;     break;
-            case 3: val32 = plex86GuestCPU->cr3;     break;
-            case 4: val32 = plex86GuestCPU->cr4.raw; break;
+            case 0: val32 = guestCpu->cr0.raw; break;
+            case 2: val32 = guestCpu->cr2;     break;
+            case 3: val32 = guestCpu->cr3;     break;
+            case 4: val32 = guestCpu->cr4.raw; break;
             default:
-              fprintf(stderr, "MOV_RdCd: cr%u?\n", nnn);
+              monpanic(vm, "MOV_RdCd: cr%u?\n", nnn);
               return 0;
             }
-          plex86GuestCPU->genReg[rm] = val32;
+          GenReg(vm, rm) = val32;
           goto advanceInstruction;
-#endif
           }
 
         case 0x22: // MOV_CdRd
@@ -546,41 +528,32 @@ return 0; // defer to user space implementation for now.
 
         case 0x23: // MOV_DdRd
           {
-return 0; // defer to user space implementation for now.
-#if 0
           Bit32u   val32;
-          iLen += decodeModRM(&opcode[iLen], &modRM);
+          iLen += decodeModRM(vm, &opcode[iLen], &modRM);
           if ( modRM.mod!=3 ) {
-            fprintf(stderr, "MOV_DdRd: mod field not 3.\n");
+            monpanic(vm, "MOV_DdRd: mod field not 3.\n");
             return 0;
             }
-          val32 = plex86GuestCPU->genReg[modRM.rm];
-          if ( setDRx(modRM.nnn, val32) )
+          val32 = GenReg(vm, modRM.rm);
+          if ( setDRx(vm, modRM.nnn, val32) )
             goto advanceInstruction;
           return 0;
-#endif
           }
 
         case 0x30: // WRMSR
           {
-return 0; // defer to user space implementation for now.
-#if 0
-          if ( doWRMSR() )
+          if ( doWRMSR(vm) )
             goto advanceInstruction;
           return 0;
-#endif
           }
 
         case 0x31: // RDTSC
           {
-return 0; // defer to user space implementation for now.
-#if 0
-          fprintf(stderr, "RDTSC.\n");
-          plex86GuestCPU->genReg[GenRegEAX] = (Bit32u) tsc;
-          plex86GuestCPU->genReg[GenRegEDX] = tsc>>32;
-          tsc += 10; // Fixme: hack for now.
+          //monprint(vm, "RDTSC.\n");
+          GenReg(vm, GenRegEAX) = (Bit32u) guestCpu->tsc;
+          GenReg(vm, GenRegEDX) = guestCpu->tsc>>32;
+          guestCpu->tsc += 10; // Fixme: hack for now.
           goto advanceInstruction;
-#endif
           }
 
         case 0xb2: // LSS_GvMp
@@ -611,21 +584,18 @@ return 0; // defer to user space implementation for now.
 
     case 0x1f: // POP DS
       {
-return 0; // defer to user space implementation for now.
-#if 0
-      unsigned selector;
+      selector_t selector;
 
       if ( opsize == 0 ) {
-        fprintf(stderr, "emulateSysInstr: POP DS, 16-bit opsize.\n");
+        monpanic(vm, "emulateSysInstr: POP DS, 16-bit opsize.\n");
         return 0;
         }
-      selector = getGuestWord( plex86GuestCPU->genReg[GenRegESP] );
-      if ( loadGuestSegment(SRegDS, selector) ) {
-        plex86GuestCPU->genReg[GenRegESP] += 4;
+      selector.raw = getGuestWord(vm, GenReg(vm, GenRegESP));
+      if ( loadGuestSegment(vm, SRegDS, selector) ) {
+        GenReg(vm, GenRegESP) += 4;
         goto advanceInstruction;
         }
       return 0;
-#endif
       }
 
     case 0x66: // Opsize:
@@ -639,29 +609,27 @@ return 0; // defer to user space implementation for now.
 
     case 0x8e: // MOV_SwEw
       {
-return 0; // defer to user space implementation for now.
-#if 0
-      unsigned modrm, rm, sreg, selector;
+      unsigned modrm, rm, sreg;
+      selector_t selector;
 
-// Fix this fetch.
+// Fixme: use decodeModRM()
       modrm = opcode[iLen++];
       rm   = modrm & 7;
       sreg = (modrm>>3) & 7;
       if ( (sreg==SRegCS) || (sreg>SRegGS) ) {
-        fprintf(stderr, "emulateSysInstr: MOV_SwEw bad sreg=%u.\n", sreg);
+        monpanic(vm, "emulateSysInstr: MOV_SwEw bad sreg=%u.\n", sreg);
         return 0; // Fail.
         }
       if ( (modrm & 0xc0) == 0xc0 ) {
-        selector = plex86GuestCPU->genReg[rm];
-        if (loadGuestSegment(sreg, selector))
+        selector.raw = GenReg(vm, rm);
+        if (loadGuestSegment(vm, sreg, selector))
           goto advanceInstruction;
         }
       else {
-        fprintf(stderr, "emulateSysInstr: MOV_SwEw mod!=11b.\n");
+        monpanic(vm, "emulateSysInstr: MOV_SwEw mod!=11b.\n");
         return 0; // Fail.
         }
       break;
-#endif
       }
 
     case 0x9b: // FWAIT
@@ -673,22 +641,23 @@ return 0; // defer to user space implementation for now.
 
     case 0xcd: // int Ib
       {
-return 0; // defer to user space implementation for now.
-#if 0
       unsigned Ib;
 
       Ib = opcode[iLen++];
-      plex86GuestCPU->eip += iLen; // Commit instruction length.
       if (Ib == 0xff) {
         // This is the special "int $0xff" call for interfacing with the HAL.
+return 0; // defer to user space implementation for now.
+#if 0
+        EIP += iLen; // Commit instruction length.
         halCall();
         return 1; // OK
+#endif
         }
       else {
+        EIP += iLen; // Commit instruction length.
         doGuestInterrupt(vm, Ib, IntFlagSoftInt, 0);
         return 1; // OK
         }
-#endif
       }
 
     case 0xcf: // IRET
@@ -759,19 +728,18 @@ return 0; // defer to user space implementation for now.
 
     case 0xea: // JMP_Ap (IdIw)
       {
-return 0; // defer to user space implementation for now.
-#if 0
       Bit32u offset;
-      unsigned cs;
+      selector_t cs;
+
       offset = * (Bit32u*) &opcode[iLen];
-      cs     = * (Bit16u*) &opcode[iLen+4];
+      cs.raw = * (Bit16u*) &opcode[iLen+4];
       iLen += 6;
-      if ( loadGuestSegment(SRegCS, cs) ) {
-        plex86GuestCPU->eip = offset;
+      if ( loadGuestSegment(vm, SRegCS, cs) ) {
+        EIP = offset;
         return 1; // OK.
         }
+      monpanic(vm, "JMP_Ap:\n");
       return 0;
-#endif
       }
 
     case 0xec: // IN_ALDX
@@ -833,7 +801,7 @@ return 0; // defer to user space implementation for now.
 return 0; // defer to user space implementation for now.
 #if 0
       if ( !(plex86GuestCPU->eflags & FlgMaskIF) ) {
-        fprintf(stderr, "HLT with IF==0.\n");
+        monprint(vm, "HLT with IF==0.\n");
         return 0;
         }
       while (1) {
@@ -857,7 +825,7 @@ return 0; // defer to user space implementation for now.
       plex86GuestCPU->eip += iLen; // Commit instruction length.
       plex86GuestCPU->eflags |= FlgMaskIF;
       if ( !plex86GuestCPU->INTR ) {
-        fprintf(stderr, "STI: INTR=0?.\n");
+        monprint(vm, "STI: INTR=0?.\n");
         return 0;
         }
       vector = picIAC(); // Get interrupt vector from PIC.
@@ -928,7 +896,7 @@ emulateUserInstr(vm_t *vm)
 // decodeOpcode:
 
   b0 = opcode[iLen++];
-  //fprintf(stderr, "instruction @ eip=0x%x is 0x%x\n", plex86GuestCPU->eip, b0);
+  //monprint(vm, "instruction @ eip=0x%x is 0x%x\n", plex86GuestCPU->eip, b0);
   switch (b0) {
 
     case 0xcd: // IntIb
@@ -950,7 +918,7 @@ emulateUserInstr(vm_t *vm)
   unsigned
 setCRx(unsigned crx, Bit32u val32)
 {
-  //fprintf(stderr, "setCR%u: val=0x%x.\n", crx, val32);
+  //monprint(vm, "setCR%u: val=0x%x.\n", crx, val32);
 
   switch ( crx ) {
 #if 0
@@ -987,7 +955,7 @@ setCRx(unsigned crx, Bit32u val32)
       {
       plex86GuestCPU->cr0.raw = val32;
       if ( !plex86GuestCPU->cr0.fields.pe ) {
-        fprintf(stderr, "setCR0: PE=0.\n");
+        monprint(vm, "setCR0: PE=0.\n");
         return 0; // Fail.
         }
       // Fixme: have to notify the monitor of changes.
@@ -1031,7 +999,7 @@ setCRx(unsigned crx, Bit32u val32)
       // X86-64 has some behaviour with msr.lme / cr4.pae.
 
       if (val32 & ~allowMask) {
-         fprintf(stderr, "SetCR4: write of 0x%08x unsupported (allowMask=0x%x).",
+         monprint(vm, "SetCR4: write of 0x%08x unsupported (allowMask=0x%x).",
              val32, allowMask);
          return 0; // Fail.
          }
@@ -1042,22 +1010,20 @@ setCRx(unsigned crx, Bit32u val32)
       }
 
     default:
-      fprintf(stderr, "setCRx: reg=%u, val=0x%x.\n", crx, val32);
+      monprint(vm, "setCRx: reg=%u, val=0x%x.\n", crx, val32);
       return 0; // Fail.
     }
   return 0; // Fail.
 }
 #endif
 
-#if 0
   unsigned
-setDRx(unsigned drx, Bit32u val32)
+setDRx(vm_t *vm, unsigned drx, Bit32u val32)
 {
-  fprintf(stderr, "setDR%u: ignoring val=0x%x.\n", drx, val32);
+  monprint(vm, "setDR%u: ignoring val=0x%x.\n", drx, val32);
   // Fixme: faked out for now.
   return 1; // OK.
 }
-#endif
 
   unsigned
 decodeModRM(vm_t *vm, Bit8u *opcodePtr, modRM_t *modRMPtr)
@@ -1138,7 +1104,7 @@ loadGuestSegment(vm_t *vm, unsigned sreg, selector_t selector)
   descriptor_t desc, *descPtr;
   guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
 
-  descPtr = fetchGuestDescBySel(vm, selector, &desc);
+  descPtr = fetchGuestDescBySel(vm, selector, &desc, 0);
   if ( descPtr==0 ) {
     monpanic(vm, "loadGuestSegment: fetch failed.\n");
     }
@@ -1154,7 +1120,8 @@ loadGuestSegment(vm_t *vm, unsigned sreg, selector_t selector)
       guestStackContext->es = selector.raw | 3; // Always push down to ring3.
       break;
     case SRegCS:
-      monpanic(vm, "loadGuestSegment: sreg = CS.\n", sreg);
+      guestStackContext->cs = selector.raw | 3; // Always push down to ring3.
+      break;
     case SRegSS:
       guestStackContext->ss = selector.raw | 3; // Always push down to ring3.
       break;
@@ -1264,7 +1231,7 @@ fetchGuestDescByLAddr(vm_t *vm, Bit32u laddr, descriptor_t *desc)
 }
 
   descriptor_t *
-fetchGuestDescBySel(vm_t *vm, selector_t sel, descriptor_t *desc)
+fetchGuestDescBySel(vm_t *vm, selector_t sel, descriptor_t *desc, unsigned flags)
 {
   phyAddr_t gdtOffset, descriptorPAddr;
   Bit8u    *phyPagePtr;
@@ -1301,6 +1268,9 @@ fetchGuestDescBySel(vm_t *vm, selector_t sel, descriptor_t *desc)
     monpanic(vm, "fetchGuestDesc: descriptor.dpl(%u) != selector.rpl(%u).\n",
              desc->dpl, sel.fields.rpl);
     }
+  if ( flags & FetchDescUpdateBusyBit ) {
+    ((descriptor_t *) &phyPagePtr[descriptorPAddr & 0xfff])->type |= 2;
+    }
   return( desc );
 }
 
@@ -1324,12 +1294,12 @@ inp(unsigned iolen, unsigned port)
       return( vgaInp(iolen, port) );
 
     case 0x30:
-      fprintf(stderr, "inp(0x30) ???\n");
+      monprint(vm, "inp(0x30) ???\n");
       goto error;
       return(0xff);
 
     default:
-      fprintf(stderr, "inp: port=0x%x unsupported.\n", port);
+      monprint(vm, "inp: port=0x%x unsupported.\n", port);
       goto error;
     }
 
@@ -1342,7 +1312,7 @@ error:
   void
 outp(unsigned iolen, unsigned port, unsigned val)
 {
-  //fprintf(stderr, "outp: port=0x%x, val=0x%x\n", port, val);
+  //monprint(vm, "outp: port=0x%x, val=0x%x\n", port, val);
   switch ( port ) {
     case 0x20:
     case 0x21:
@@ -1368,7 +1338,7 @@ outp(unsigned iolen, unsigned port, unsigned val)
 
     case 0x80:
       port0x80 = val;
-      //fprintf(stderr, "Port0x80 = 0x%02x\n", port0x80);
+      //monprint(vm, "Port0x80 = 0x%02x\n", port0x80);
       return;
 
     case 0x3c0:
@@ -1380,11 +1350,11 @@ outp(unsigned iolen, unsigned port, unsigned val)
       return;
 
     case 0x3f2:
-      fprintf(stderr, "outp(0x%x)=0x%x unsupported.\n", port, val);
+      monprint(vm, "outp(0x%x)=0x%x unsupported.\n", port, val);
       return;
 
     default:
-      fprintf(stderr, "outp(0x%x)=0x%x unsupported.\n", port, val);
+      monprint(vm, "outp(0x%x)=0x%x unsupported.\n", port, val);
       goto error;
     }
 
@@ -1415,7 +1385,7 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
   nexus             = vm->guest.addr.nexus;
   fromCPL = CPL;
 
-  // fprintf(stderr, "doGuestInterrupt: vector=%u.\n", vector);
+  // monprint(vm, "doGuestInterrupt: vector=%u.\n", vector);
   if ( ((vector<<3)+7) > guestCpu->idtr.limit ) {
     monpanic(vm, "doGuestInterrupt: vector(%u) OOB.\n", vector);
     }
@@ -1446,7 +1416,7 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
   if ( (csSel.raw & 0xfffc) == 0 ) {
     monpanic(vm, "doGuestInterrupt: gate selector NULL.\n");
     }
-  csDescPtr = fetchGuestDescBySel(vm, csSel, &csDesc);
+  csDescPtr = fetchGuestDescBySel(vm, csSel, &csDesc, 0);
   if ( (csDescPtr==0) ||
        (csDescPtr->type!=0x1a) ||
        (csDescPtr->dpl!=0) ||
@@ -1497,7 +1467,7 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
     if ( ssSel.fields.rpl != csDescPtr->dpl ) {
       monpanic(vm, "doGuestInterrupt: ss.rpl != cs.rpl.\n");
       }
-    ssDescPtr = fetchGuestDescBySel(vm, ssSel, &ssDesc);
+    ssDescPtr = fetchGuestDescBySel(vm, ssSel, &ssDesc, 0);
     if ( (ssDescPtr==0) ||
          (ssDescPtr->type!=0x12) ||
          (ssDescPtr->dpl!=0) ||
@@ -1600,12 +1570,12 @@ doIRET(void)
   fromCPL = CPL; // Save the source CPL since we overwrite it.
 
   if ( plex86GuestCPU->eflags & FlgMaskVIF ) {
-    fprintf(stderr, "doIRET: VIF=1.\n");
+    monprint(vm, "doIRET: VIF=1.\n");
     goto error;
     }
   if ( plex86GuestCPU->eflags & FlgMaskNT ) {
     // NT=1 means return from nested task.
-    fprintf(stderr, "doIRET: NT=1.\n");
+    monprint(vm, "doIRET: NT=1.\n");
     goto error;
     }
   esp = plex86GuestCPU->genReg[GenRegESP];
@@ -1618,30 +1588,30 @@ doIRET(void)
     retEFlags &= ~FlgMaskVIF;
     }
   else if ( ifFlags!=0 ) {
-    fprintf(stderr, "doIRET: VIF!=IF: 0x%x.\n", retEFlags);
+    monprint(vm, "doIRET: VIF!=IF: 0x%x.\n", retEFlags);
     }
 
   if ( retEFlags & FlgMaskVM ) {
     // IRET to v86 mode not supported.
-    fprintf(stderr, "doIRET: return EFLAGS.VM=1.\n");
+    monprint(vm, "doIRET: return EFLAGS.VM=1.\n");
     goto error;
     }
   if ( retEFlags & FlgMaskIOPL ) {
     // IRET eflags value has IOPL non-zero.
-    fprintf(stderr, "doIRET: return EFLAGS.IOPL=%u.\n", (retEFlags>>12)&3);
+    monprint(vm, "doIRET: return EFLAGS.IOPL=%u.\n", (retEFlags>>12)&3);
     goto error;
     }
   if ( (retCS.raw & 0xfffc) == 0 ) {
-    fprintf(stderr, "doIRET: return CS NULL.\n");
+    monprint(vm, "doIRET: return CS NULL.\n");
     goto error;
     }
   if ( ((retCS.fields.rpl!=0) && (retCS.fields.rpl!=3)) || retCS.fields.ti ) {
-    fprintf(stderr, "doIRET: bad return CS=0x%x.\n", retCS.raw);
+    monprint(vm, "doIRET: bad return CS=0x%x.\n", retCS.raw);
     goto error;
     }
   if ( retCS.fields.rpl < fromCPL ) {
     // Can not IRET to an inner ring.
-    fprintf(stderr, "doIRET: to rpl=%u from CPL=%u.\n", retCS.fields.rpl, CPL);
+    monprint(vm, "doIRET: to rpl=%u from CPL=%u.\n", retCS.fields.rpl, CPL);
     goto error;
     }
   csDescPtr = fetchGuestDescBySel(vm, retCS);
@@ -1649,7 +1619,7 @@ doIRET(void)
        (csDescPtr->type!=0x1a) ||
        (csDescPtr->dpl!=retCS.fields.rpl) ||
        (csDescPtr->p==0) ) {
-    fprintf(stderr, "doIRET: bad CS descriptor, type=0x%x, "
+    monprint(vm, "doIRET: bad CS descriptor, type=0x%x, "
                     "dpl=%u, p=%u.\n",
                     csDescPtr->type, csDescPtr->dpl, csDescPtr->p);
     goto error;
@@ -1661,16 +1631,16 @@ doIRET(void)
     Bit32u     retESP;
     selector_t retSS;
     unsigned i, sReg;
-//fprintf(stderr, "doIRET: rpl=%u.\n", retCS.fields.rpl);
+//monprint(vm, "doIRET: rpl=%u.\n", retCS.fields.rpl);
 
     retESP    = getGuestDWord(esp+12);
     retSS.raw = getGuestWord(esp+16);
     if ( (retSS.raw & 0xfffc) == 0 ) {
-      fprintf(stderr, "doIRET: return SS NULL.\n");
+      monprint(vm, "doIRET: return SS NULL.\n");
       goto error;
       }
     if ( retSS.fields.rpl != retCS.fields.rpl ) {
-      fprintf(stderr, "doIRET: SS.rpl!=CS.rpl.\n");
+      monprint(vm, "doIRET: SS.rpl!=CS.rpl.\n");
       goto error;
       }
     ssDescPtr = fetchGuestDescBySel(vm, retSS);
@@ -1678,7 +1648,7 @@ doIRET(void)
          (ssDescPtr->type!=0x12) ||
          (ssDescPtr->dpl!=retCS.fields.rpl) ||
          (ssDescPtr->p==0) ) {
-      fprintf(stderr, "doIRET: bad SS descriptor, type=0x%x, "
+      monprint(vm, "doIRET: bad SS descriptor, type=0x%x, "
                       "dpl=%u, p=%u.\n",
                       ssDescPtr->type, ssDescPtr->dpl, ssDescPtr->p);
       goto error;
@@ -1717,7 +1687,7 @@ doIRET(void)
   plex86GuestCPU->eip = retEIP;
 
 //if (retCS.fields.rpl==3) {
-//  fprintf(stderr, "iret to ring3, cs.slot=%u, eip=0x%x.\n",
+//  monprint(vm, "iret to ring3, cs.slot=%u, eip=0x%x.\n",
 //          retCS.fields.index, retEIP);
 //  }
 
@@ -1726,7 +1696,7 @@ doIRET(void)
                FlgMaskZF | FlgMaskAF | FlgMaskPF | FlgMaskCF;
 // Fixme: remove
 if (changeMask != 0x254dd5) {
-  fprintf(stderr, "changeMask != 0x254dd5.\n");
+  monprint(vm, "changeMask != 0x254dd5.\n");
   goto error;
   }
 
@@ -1750,45 +1720,42 @@ error:
 #endif
 
 
-#if 0
   unsigned
-doWRMSR(void)
+doWRMSR(vm_t *vm)
 {
   Bit32u ecx, edx, eax;
+  guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
 
   // MSR[ECX] <-- EDX:EAX
   // #GP(0): cpuid.msr==0, reserved or unimplemented MSR addr.
-  ecx = plex86GuestCPU->genReg[GenRegECX]; // MSR #
-  edx = plex86GuestCPU->genReg[GenRegEDX]; // High dword
-  eax = plex86GuestCPU->genReg[GenRegEAX]; // Low  dword
+  ecx = GenReg(vm, GenRegECX); // MSR #
+  edx = GenReg(vm, GenRegEDX); // High dword
+  eax = GenReg(vm, GenRegEAX); // Low  dword
 
   switch ( ecx ) {
     case MSR_IA32_SYSENTER_CS:
-      // fprintf(stderr, "WRMSR[IA32_SYSENTER_CS]: 0x%x\n", eax);
-      sysEnter.cs = eax;
+      // monprint(vm, "WRMSR[IA32_SYSENTER_CS]: 0x%x\n", eax);
+      guestCpu->sysEnter.cs = eax;
       return 1;
     case MSR_IA32_SYSENTER_ESP:
-      // fprintf(stderr, "WRMSR[IA32_SYSENTER_ESP]: 0x%x\n", eax);
-      sysEnter.esp = eax;
+      // monprint(vm, "WRMSR[IA32_SYSENTER_ESP]: 0x%x\n", eax);
+      guestCpu->sysEnter.esp = eax;
       return 1;
     case MSR_IA32_SYSENTER_EIP:
-      // fprintf(stderr, "WRMSR[IA32_SYSENTER_EIP]: 0x%x\n", eax);
-      sysEnter.eip = eax;
+      // monprint(vm, "WRMSR[IA32_SYSENTER_EIP]: 0x%x\n", eax);
+      guestCpu->sysEnter.eip = eax;
       return 1;
 
     default:
-      fprintf(stderr, "WRMSR[0x%x]: unimplemented MSR.\n",
-              plex86GuestCPU->genReg[GenRegECX]);
+      monpanic(vm, "WRMSR[0x%x]: unimplemented MSR.\n", ecx);
       //doGuestInterrupt(vm, ExceptionGP, IntFlagPushError, 0);
       //return 0; // Fault occurred.
       // Fixme: should assert RF in a separate exception routine.
       break;
     }
 
-//error:
-  plex86TearDown(); exit(1);
+  monpanic(vm, "doWRMSR.\n");
 }
-#endif
 
 // Fixme: this is fetching a descriptor again.
 #warning "guestSelectorUpdated should take a descriptor parameter."

@@ -42,10 +42,6 @@
 #define IntFlagAssertRF  2
 #define IntFlagSoftInt   4
 
-#define MSR_IA32_SYSENTER_CS    0x174
-#define MSR_IA32_SYSENTER_ESP   0x175
-#define MSR_IA32_SYSENTER_EIP   0x176
-
 #define CPL plex86GuestCPU->sreg[SRegCS].des.dpl
 
 typedef struct {
@@ -60,24 +56,15 @@ typedef struct {
   unsigned scale;
   } modRM_t;
 
-typedef struct {
-  Bit32u cs;
-  Bit32u eip;
-  Bit32u esp;
-  } sysEnter_t;
-
 
 // ===================
 // Function prototypes
 // ===================
 
 static unsigned  emulateSysInstr(void);
-static unsigned  emulateUserInstr(void);
 static unsigned  setCRx(unsigned crx, Bit32u val32);
-static unsigned  setDRx(unsigned drx, Bit32u val32);
 static phyAddr_t translateLinToPhy(Bit32u lAddr);
 static unsigned  decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr);
-static unsigned  loadGuestSegment(unsigned sreg, unsigned selector);
 static Bit32u    getGuestDWord(Bit32u lAddr);
 static Bit16u    getGuestWord(Bit32u lAddr);
 static void      writeGuestDWord(Bit32u lAddr, Bit32u val);
@@ -86,15 +73,12 @@ static unsigned  inp(unsigned iolen, unsigned port);
 static void      outp(unsigned iolen, unsigned port, unsigned val);
 
 static void      doIRET(void);
-static unsigned  doWRMSR(void);
 
 
 
 // =========
 // Variables
 // =========
-
-static sysEnter_t sysEnter;
 
 static const unsigned dataSReg[4] = { SRegES, SRegDS, SRegFS, SRegGS };
 static descriptor_t nullDesc = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -121,9 +105,10 @@ doGuestFault(unsigned fault, unsigned errorCode)
         return(0);
         }
       else {
-        //fprintf(stderr, "#UD/#GP (CPL!=0).\n");
-        emulateUserInstr();
-        return 1;
+        fprintf(stderr, "#UD/#GP (CPL!=0).\n");
+        //emulateUserInstr();
+        //return 1;
+        return 0;
         }
 
     case ExceptionNM:
@@ -139,24 +124,13 @@ doGuestFault(unsigned fault, unsigned errorCode)
       else {
         // #NM from user code - invoke kernel #NM handler.
 fprintf(stderr, "#NM (CPL!=0).\n");
-doInterrupt(ExceptionNM, IntFlagAssertRF, 0);
+//doInterrupt(ExceptionNM, IntFlagAssertRF, 0);
 //emulateUserInstr();
-        return 1;
+        //return 1;
+        return 0;
         }
       fprintf(stderr, "#NM (CPL!=0).\n");
       return(0);
-
-    case ExceptionPF:
-#warning "Fixme: errorCode needs to be corrected for pushed-down priv level."
-
-      // If this Page Fault was from non-user code, we need to fix-up the
-      // privilege level bit in the error code.  This really should be moved
-      // to the VM monitor.
-      if ( CPL!=3 ) {
-        errorCode &= ~(1<<2);
-        }
-      doInterrupt(ExceptionPF, IntFlagAssertRF | IntFlagPushError, errorCode);
-      return 1;
 
     default:
       fprintf(stderr, "doGuestFault: unhandled exception %u.\n", fault);
@@ -294,79 +268,6 @@ decodeOpcode:
       unsigned b1;
       b1 = opcode[iLen++];
       switch (b1) {
-        case 0x00: // Group6
-          {
-          iLen += decodeModRM(&opcode[iLen], &modRM);
-          fprintf(stderr, "emulateSysIntr: G6: nnn=%u\n", modRM.nnn);
-          switch (modRM.nnn) {
-            case 2: // LLDT_Ew
-              {
-              selector_t selector;
-
-              if (modRM.mod==3)
-                selector.raw = plex86GuestCPU->genReg[modRM.rm];
-              else
-                selector.raw = getGuestWord(modRM.addr);
-              if ( (selector.raw & 0xfffc) == 0 ) {
-                plex86GuestCPU->ldtr.sel = selector;
-                plex86GuestCPU->ldtr.valid = 0;
-                goto advanceInstruction;
-                }
-              fprintf(stderr, "emulateSysIntr: LLDT: forcing selector null.\n");
-              plex86GuestCPU->ldtr.sel.raw = 0; // Make it null anyways.
-              plex86GuestCPU->ldtr.valid = 0;
-              goto advanceInstruction;
-              }
-
-            case 3: // LTR_Ew
-              {
-              selector_t    tssSelector;
-              descriptor_t *tssDescriptorPtr;
-              Bit32u tssLimit;
-
-              if (modRM.mod==3)
-                tssSelector.raw = plex86GuestCPU->genReg[modRM.rm];
-              else
-                tssSelector.raw = getGuestWord(modRM.addr);
-              if ( (tssSelector.raw & 0xfffc) == 0 ) {
-                plex86GuestCPU->tr.sel = tssSelector;
-                plex86GuestCPU->tr.valid = 0;
-                goto advanceInstruction;
-                }
-              if ( tssSelector.raw & 4 ) {
-                fprintf(stderr, "LTR_Ew: selector.ti=1.\n");
-                return 0;
-                }
-              tssDescriptorPtr = fetchGuestDescriptor(tssSelector);
-              if ( !tssDescriptorPtr ) {
-                fprintf(stderr, "LTR_Ew: bad descriptor.\n");
-                return 0;
-                }
-              tssLimit = (tssDescriptorPtr->limit_high<<16) |
-                          tssDescriptorPtr->limit_low;
-              if (tssDescriptorPtr->g)
-                tssLimit = (tssLimit<<12) | 0xfff;
-              if ( (tssDescriptorPtr->p==0) ||
-                   (tssDescriptorPtr->type!=9) ||
-                   (tssLimit<103) ) {
-                fprintf(stderr, "LTR_Ew: bad descriptor.\n");
-                return 0;
-                }
-              plex86GuestCPU->tr.sel = tssSelector;
-              plex86GuestCPU->tr.des = *tssDescriptorPtr;
-              plex86GuestCPU->tr.des.type |= 2; // Set busy bit.
-              plex86GuestCPU->tr.valid = 1;
-
-              // Write descriptor back to memory to update busy bit.
-              tssDescriptorPtr->type |= 2;
-              goto advanceInstruction;
-              }
-
-            default:
-            }
-          return 0;
-          }
-
         case 0x01: // Group7
           {
           iLen += decodeModRM(&opcode[iLen], &modRM);
@@ -386,21 +287,6 @@ decodeOpcode:
               plex86GuestCPU->gdtr.base  = base32;
               plex86GuestCPU->gdtr.limit = limit16;
 fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
-              goto advanceInstruction;
-              }
-            case 3: // LIDT_Ms
-              {
-              Bit32u   base32;
-              Bit16u   limit16;
-
-              if (modRM.mod==3) { // Must be a memory reference.
-                fprintf(stderr, "LIDT_Ms: mod=3.\n");
-                return 0;
-                }
-              limit16 = getGuestWord(modRM.addr);
-              base32  = getGuestDWord(modRM.addr+2);
-              plex86GuestCPU->idtr.base  = base32;
-              plex86GuestCPU->idtr.limit = limit16;
               goto advanceInstruction;
               }
             case 7: // INVLPG
@@ -427,30 +313,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
           plex86GuestCPU->cr0.fields.ts = 0;
           goto advanceInstruction;
           }
-        case 0x20: // MOV_RdCd
-          {
-          unsigned modrm, rm, nnn;
-          Bit32u   val32;
-// Fix this fetch.
-          modrm = opcode[iLen++];
-          rm   = modrm & 7;
-          nnn  = (modrm>>3) & 7;
-          if ( (modrm & 0xc0) != 0xc0 ) {
-            fprintf(stderr, "MOV_RdCd: mod field not 11b.\n");
-            return 0;
-            }
-          switch (nnn) {
-            case 0: val32 = plex86GuestCPU->cr0.raw; break;
-            case 2: val32 = plex86GuestCPU->cr2;     break;
-            case 3: val32 = plex86GuestCPU->cr3;     break;
-            case 4: val32 = plex86GuestCPU->cr4.raw; break;
-            default:
-              fprintf(stderr, "MOV_RdCd: cr%u?\n", nnn);
-              return 0;
-            }
-          plex86GuestCPU->genReg[rm] = val32;
-          goto advanceInstruction;
-          }
 
         case 0x22: // MOV_CdRd
           {
@@ -466,57 +328,11 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
           return 0;
           }
 
-        case 0x23: // MOV_DdRd
-          {
-          Bit32u   val32;
-          iLen += decodeModRM(&opcode[iLen], &modRM);
-          if ( modRM.mod!=3 ) {
-            fprintf(stderr, "MOV_DdRd: mod field not 3.\n");
-            return 0;
-            }
-          val32 = plex86GuestCPU->genReg[modRM.rm];
-          if ( setDRx(modRM.nnn, val32) )
-            goto advanceInstruction;
-          return 0;
-          }
-
-        case 0x30: // WRMSR
-          {
-          if ( doWRMSR() )
-            goto advanceInstruction;
-          return 0;
-          }
-
-        case 0x31: // RDTSC
-          {
-          fprintf(stderr, "RDTSC.\n");
-          plex86GuestCPU->genReg[GenRegEAX] = (Bit32u) tsc;
-          plex86GuestCPU->genReg[GenRegEDX] = tsc>>32;
-          tsc += 10; // Fixme: hack for now.
-          goto advanceInstruction;
-          }
-
         default:
           fprintf(stderr, "emulateSysInstr: default b1=0x%x\n", b1);
           break;
         }
       break;
-      }
-
-    case 0x1f: // POP DS
-      {
-      unsigned selector;
-
-      if ( opsize == 0 ) {
-        fprintf(stderr, "emulateSysInstr: POP DS, 16-bit opsize.\n");
-        return 0;
-        }
-      selector = getGuestWord( plex86GuestCPU->genReg[GenRegESP] );
-      if ( loadGuestSegment(SRegDS, selector) ) {
-        plex86GuestCPU->genReg[GenRegESP] += 4;
-        goto advanceInstruction;
-        }
-      return 0;
       }
 
     case 0x66: // Opsize:
@@ -526,30 +342,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         goto decodeOpcode;
         }
       return 0;
-      }
-
-    case 0x8e: // MOV_SwEw
-      {
-      unsigned modrm, rm, sreg, selector;
-
-// Fix this fetch.
-      modrm = opcode[iLen++];
-      rm   = modrm & 7;
-      sreg = (modrm>>3) & 7;
-      if ( (sreg==SRegCS) || (sreg>SRegGS) ) {
-        fprintf(stderr, "emulateSysInstr: MOV_SwEw bad sreg=%u.\n", sreg);
-        return 0; // Fail.
-        }
-      if ( (modrm & 0xc0) == 0xc0 ) {
-        selector = plex86GuestCPU->genReg[rm];
-        if (loadGuestSegment(sreg, selector))
-          goto advanceInstruction;
-        }
-      else {
-        fprintf(stderr, "emulateSysInstr: MOV_SwEw mod!=11b.\n");
-        return 0; // Fail.
-        }
-      break;
       }
 
     case 0xcd: // int Ib
@@ -563,10 +355,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         halCall();
         return 1; // OK
         }
-      else {
-        doInterrupt(Ib, IntFlagSoftInt, 0);
-        return 1; // OK
-        }
+      return 0; // Fail. (normal int handled in monitor space now)
       }
 
     case 0xcf: // IRET
@@ -594,20 +383,6 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       port8 = opcode[iLen++];
       outp(1, port8, plex86GuestCPU->genReg[GenRegEAX] & 0xff);
       goto advanceInstruction;
-      }
-
-    case 0xea: // JMP_Ap (IdIw)
-      {
-      Bit32u offset;
-      unsigned cs;
-      offset = * (Bit32u*) &opcode[iLen];
-      cs     = * (Bit16u*) &opcode[iLen+4];
-      iLen += 6;
-      if ( loadGuestSegment(SRegCS, cs) ) {
-        plex86GuestCPU->eip = offset;
-        return 1; // OK.
-        }
-      return 0;
       }
 
     case 0xec: // IN_ALDX
@@ -699,69 +474,6 @@ advanceInstruction:
   return 1; // OK.
 }
 
-  unsigned
-emulateUserInstr(void)
-{
-  phyAddr_t pAddr;
-  unsigned b0, iLen=0;
-  Bit8u    opcode[16];
-  Bit32u  *opcodeDWords;
-  // modRM_t  modRM;
-  // unsigned opsize = 1; // 32-bit opsize by default.
-  Bit32u   lAddr;
-
-  if ( plex86GuestCPU->cr0.fields.pg==0 ) {
-    fprintf(stderr, "emulateUserInstr: cr0.pg==0.\n");
-    goto error;
-    }
-  lAddr = plex86GuestCPU->eip; // Forget segmentation base for Linux.
-  pAddr = translateLinToPhy(lAddr);
-  if (pAddr == -1) {
-    fprintf(stderr, "emulateUserInstr: lin-->phy translation failed (0x%x).\n",
-            lAddr);
-    return 0; // Fail.
-    }
-  if ( pAddr >= (plex86MemSize-16) ) {
-    fprintf(stderr, "emulateUserInstr: physical address of 0x%x "
-            "beyond memory.\n", pAddr);
-    return 0; // Fail.
-    }
-  if ( (pAddr&0xfff) <= 0xff0 ) {
-    // Draw in 16 bytes from guest memory.  No boundary checks are
-    // necessary since paging is off and we can't be overrunning
-    // the physical memory bounds.
-    opcodeDWords = (Bit32u*) &opcode[0];
-    opcodeDWords[0] = * (Bit32u*) &plex86MemPtr[pAddr+ 0];
-    opcodeDWords[1] = * (Bit32u*) &plex86MemPtr[pAddr+ 4];
-    opcodeDWords[2] = * (Bit32u*) &plex86MemPtr[pAddr+ 8];
-    opcodeDWords[3] = * (Bit32u*) &plex86MemPtr[pAddr+12];
-    }
-  else {
-    fprintf(stderr, "emulateUserInstr: possible page crossing.\n");
-    return 0; // Fail.
-    }
-
-// decodeOpcode:
-
-  b0 = opcode[iLen++];
-  //fprintf(stderr, "instruction @ eip=0x%x is 0x%x\n", plex86GuestCPU->eip, b0);
-  switch (b0) {
-    case 0xcd: // IntIb
-      {
-      unsigned Ib;
-
-      Ib = opcode[iLen++];
-      plex86GuestCPU->eip += iLen; // Commit instruction length.
-      doInterrupt(Ib, IntFlagSoftInt, 0);
-      return 1; // OK
-      }
-    default:
-    }
-
-error:
-  plex86TearDown(); exit(1);
-  return 0;
-}
 
   unsigned
 setCRx(unsigned crx, Bit32u val32)
@@ -865,14 +577,6 @@ setCRx(unsigned crx, Bit32u val32)
 }
 
   unsigned
-setDRx(unsigned drx, Bit32u val32)
-{
-  fprintf(stderr, "setDR%u: ignoring val=0x%x.\n", drx, val32);
-  // Fixme: faked out for now.
-  return 1; // OK.
-}
-
-  unsigned
 decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr)
 {
   unsigned modrm = opcodePtr[0];
@@ -950,58 +654,6 @@ decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr)
   return(0);
 }
 
-  unsigned
-loadGuestSegment(unsigned sreg, unsigned selector)
-{
-// Fixme: needs some data/code descriptor fields checks,
-// because we are passing the shadow cache assuming it is valid.
-
-  unsigned gdtIndex, rpl;
-  descriptor_t * gdtEntryPtr;
-  phyAddr_t gdtOffset, descriptorPAddr;
-
-  if (selector & 4) {
-    fprintf(stderr, "loadGuestSegment: selector.ti=1.\n");
-    return 0; // Fail.
-    }
-  rpl = (selector & 3);
-  gdtIndex  = (selector>>3);
-
-// Fixme: Linux kernel/user seg?
-// Fixme: or at least check for gdtIndex==0 (NULL selector)
-
-  gdtOffset = (selector&~7);
-// phy mem boundary check.  Following check not needed for Linux since
-// we will test for a Linux kernel seg.
-  if (gdtOffset >= plex86GuestCPU->gdtr.limit) {
-    fprintf(stderr, "loadGuestSegment: selector=0x%x OOB.\n",
-            selector);
-    return 0; // Fail.
-    }
-  descriptorPAddr = translateLinToPhy(plex86GuestCPU->gdtr.base + gdtOffset);
-  if (descriptorPAddr == -1) {
-    fprintf(stderr, "loadGuestSegment: could not translate descriptor addr.\n");
-    return 0; // Fail.
-    }
-  if ( descriptorPAddr & 7 ) {
-    fprintf(stderr, "loadGuestSegment: descriptor addr not 8-byte aligned.\n");
-    return 0; // Fail.
-    }
-  if (descriptorPAddr >= (plex86MemSize-7) ) {
-    fprintf(stderr, "loadGuestSegment: descriptor addr OOB.\n");
-    return 0; // Fail.
-    }
-  gdtEntryPtr = (descriptor_t *) &plex86MemPtr[descriptorPAddr];
-  if (gdtEntryPtr->dpl != rpl) {
-    fprintf(stderr, "loadGuestSegment: descriptor.dpl(%u) != selector.rpl(%u).\n",
-            gdtEntryPtr->dpl, rpl);
-    return 0; // Fail.
-    }
-  plex86GuestCPU->sreg[sreg].sel.raw = selector;
-  plex86GuestCPU->sreg[sreg].des = *gdtEntryPtr;
-  plex86GuestCPU->sreg[sreg].valid = 1;
-  return(1); // OK.
-}
 
   Bit32u
 getGuestDWord(Bit32u lAddr)
@@ -1535,44 +1187,5 @@ if (changeMask != 0x254dd5) {
   return;
 
 error:
-  plex86TearDown(); exit(1);
-}
-
-
-  unsigned
-doWRMSR(void)
-{
-  Bit32u ecx, edx, eax;
-
-  // MSR[ECX] <-- EDX:EAX
-  // #GP(0): cpuid.msr==0, reserved or unimplemented MSR addr.
-  ecx = plex86GuestCPU->genReg[GenRegECX]; // MSR #
-  edx = plex86GuestCPU->genReg[GenRegEDX]; // High dword
-  eax = plex86GuestCPU->genReg[GenRegEAX]; // Low  dword
-
-  switch ( ecx ) {
-    case MSR_IA32_SYSENTER_CS:
-      // fprintf(stderr, "WRMSR[IA32_SYSENTER_CS]: 0x%x\n", eax);
-      sysEnter.cs = eax;
-      return 1;
-    case MSR_IA32_SYSENTER_ESP:
-      // fprintf(stderr, "WRMSR[IA32_SYSENTER_ESP]: 0x%x\n", eax);
-      sysEnter.esp = eax;
-      return 1;
-    case MSR_IA32_SYSENTER_EIP:
-      // fprintf(stderr, "WRMSR[IA32_SYSENTER_EIP]: 0x%x\n", eax);
-      sysEnter.eip = eax;
-      return 1;
-
-    default:
-      fprintf(stderr, "WRMSR[0x%x]: unimplemented MSR.\n",
-              plex86GuestCPU->genReg[GenRegECX]);
-      //doInterrupt(ExceptionGP, IntFlagPushError, 0);
-      //return 0; // Fault occurred.
-      // Fixme: should assert RF in a separate exception routine.
-      break;
-    }
-
-//error:
   plex86TearDown(); exit(1);
 }
