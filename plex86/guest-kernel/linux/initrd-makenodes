@@ -1,0 +1,15 @@
+guest_mknod() {
+  mknod $1 $2 $3 $4
+  chmod $5 $1
+  }
+
+guest_mknod dev/null c 1 3 666
+guest_mknod dev/zero c 1 5 666
+guest_mknod dev/full c 1 7 666
+guest_mknod dev/random c 1 8 644
+guest_mknod dev/urandom c 1 9 644
+guest_mknod dev/tty c 5 0 666
+guest_mknod dev/ptmx c 5 2 666
+
+# "With these extra nodes, and /var/run/utmp, and mounting /proc in linuxrc, 
+# xterm seems to get a lot further."
