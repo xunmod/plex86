@@ -471,6 +471,7 @@ plex86TearDown(void)
   unsigned f;
   fprintf(stderr, "plex86: plex86TearDown called.\n");
 
+
   fprintf(stderr, "plex86: guest Fault Count (FYI):\n");
   for (f=0; f<32; f++) {
     if (faultCount[f])

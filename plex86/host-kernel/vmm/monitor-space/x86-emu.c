@@ -15,6 +15,7 @@
 //   Clean assertRF passed to doGuestInterrupt()
 //   Check that all uses of translateLinToPhy() check for LinAddrNotAvailable
 //   Make sure that linear accesses modify guest page table A&D bits properly.
+//   Change guest_cpu_t and others to guestCpu_t
 
 
 // ===================
@@ -56,7 +57,7 @@ typedef struct {
 // Function prototypes
 // ===================
 
-//static unsigned  emulateSysInstr(void);
+static unsigned  emulateSysInstr(vm_t *);
 static void      emulateUserInstr(vm_t *);
 //static unsigned  setCRx(unsigned crx, Bit32u val32);
 //static unsigned  setDRx(unsigned drx, Bit32u val32);
@@ -112,10 +113,6 @@ static const phyAddr_t LinAddrNotAvailable = -1;
   void
 doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
 {
-  guestStackContext_t *guestStackContext;
-
-  guestStackContext = vm->guest.addr.guestStackContext;
-
   switch (fault) {
 
     case ExceptionUD:
@@ -123,7 +120,7 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
       if ( CPL==0 ) {
 #if 0
 // This fault actually should assert RF.
-        if (emulateSysInstr()) {
+        if ( emulateSysInstr(vm) ) {
           // Could speculatively execute until a non protection-level
           // change system instruction is encounted to eliminate some
           // monitor faults.
@@ -143,36 +140,25 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
       break;
 
     case ExceptionNM:
-#if 0
       if ( CPL==0 ) {
-// This fault actually should assert RF.
-        if (emulateSysInstr()) {
+// Fixme: This fault actually should assert RF.
+        if ( emulateSysInstr(vm) ) {
           // Could speculatively execute until a non protection-level
           // change system instruction is encounted to eliminate some
           // monitor faults.
           return;
           }
-        // For now, defer back to the user space implementation until
-        // the monitor space code is filled out.
-        toHostGuestFault(vm, fault, errorCode);
+        monpanic(vm, "ExceptionNM: emulateSysInstr failed.\n");
         }
       else {
         // #NM from user code - invoke kernel #NM handler.
-monprint(vm, "#NM (CPL!=0).\n");
-doGuestInterrupt(vm, ExceptionNM, IntFlagAssertRF, 0);
-//emulateUserInstr(vm);
-        return;
+monprint(vm, "#NM (CPL!=0).\n"); // Fixme:
+        doGuestInterrupt(vm, ExceptionNM, IntFlagAssertRF, 0);
+        //emulateUserInstr(vm);
         }
-      monpanic(vm, "#NM (CPL!=0).\n");
-#else
-      // For now, defer back to the user space implementation until
-      // the monitor space code is filled out.
-      toHostGuestFault(vm, fault, errorCode);
-#endif
       break;
 
     case ExceptionPF:
-#if 0
 #warning "Fixme: errorCode needs to be corrected for pushed-down priv level."
 
       // If this Page Fault was from non-user code, we need to fix-up the
@@ -183,11 +169,6 @@ doGuestInterrupt(vm, ExceptionNM, IntFlagAssertRF, 0);
         }
       doGuestInterrupt(vm, ExceptionPF,
                        IntFlagAssertRF | IntFlagPushError, errorCode);
-#else
-      // For now, defer back to the user space implementation until
-      // the monitor space code is filled out.
-      toHostGuestFault(vm, fault, errorCode);
-#endif
       break;
 
     default:
@@ -245,45 +226,53 @@ translateLinToPhy(vm_t *vm, Bit32u lAddr)
   return(pAddr);
 }
 
-#if 0
   unsigned
-emulateSysInstr(void)
+emulateSysInstr(vm_t *vm)
 {
   phyAddr_t pAddr;
   unsigned b0, iLen=0;
   Bit8u    opcode[16];
   Bit32u  *opcodeDWords;
-  modRM_t modRM;
-  unsigned opsize = 1; // 32-bit opsize by default.
+  //modRM_t modRM;
+  unsigned  pOff;
+  //unsigned opsize = 1; // 32-bit opsize by default.
+  guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
+  guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
 
-  if (plex86GuestCPU->cr0.fields.pg) {
+  if (guestCpu->cr0.fields.pg) {
     Bit32u    lAddr;
-    unsigned  pageOffset;
 
-    lAddr = plex86GuestCPU->eip; // Forget segmentation base for Linux.
-    pAddr = translateLinToPhy(lAddr);
+    lAddr = EIP; // Forget segmentation base for Linux.
+    pAddr = translateLinToPhy(vm, lAddr);
     if (pAddr == LinAddrNotAvailable) {
-      fprintf(stderr, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
+      monpanic(vm, "emulateSysInstr: lin-->phy translation failed (0x%x).\n",
               lAddr);
-      return 0; // Fail.
       }
-    if ( pAddr >= (plex86MemSize-16) ) {
-      fprintf(stderr, "emulateSysInstr: physical address of 0x%x "
+    if ( pAddr >= (vm->pages.guest_n_bytes-16) ) {
+      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
               "beyond memory.\n", pAddr);
-      return 0; // Fail.
       }
-    pageOffset = pAddr & 0xfff;
-    if ( pageOffset <= 0xff0 ) {
-      // Draw in 16 bytes from guest memory.  No boundary checks are
-      // necessary since paging is off and we can't be overrunning
-      // the physical memory bounds.
+    pOff = pAddr & 0xfff;
+    if ( pOff <= 0xff0 ) {
+      Bit8u *phyPagePtr;
+
+      // Draw in 16 bytes from guest memory into a local array so we don't
+      // have to worry about edge conditions when decoding.  All accesses are
+      // within a single physical page.
+      // Fixme: we could probably use the linear address (corrected for
+      // Fixme: monitor CS.base) to access the page without creating a window.
+      /* Open a window into guest physical memory. */
+      phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
+                                vm->guest.addr.tmp_phy_page0);
       opcodeDWords = (Bit32u*) &opcode[0];
-      opcodeDWords[0] = * (Bit32u*) &plex86MemPtr[pAddr+ 0];
-      opcodeDWords[1] = * (Bit32u*) &plex86MemPtr[pAddr+ 4];
-      opcodeDWords[2] = * (Bit32u*) &plex86MemPtr[pAddr+ 8];
-      opcodeDWords[3] = * (Bit32u*) &plex86MemPtr[pAddr+12];
+      opcodeDWords[0] = * (Bit32u*) &phyPagePtr[pOff+ 0];
+      opcodeDWords[1] = * (Bit32u*) &phyPagePtr[pOff+ 4];
+      opcodeDWords[2] = * (Bit32u*) &phyPagePtr[pOff+ 8];
+      opcodeDWords[3] = * (Bit32u*) &phyPagePtr[pOff+12];
       }
     else {
+monpanic(vm, "emulateSysInstr: page boundary fetch unfinshed.\n");
+#if 0
       phyAddr_t page1PAddr;
       unsigned i, page0Count, page1Count;
 
@@ -304,23 +293,36 @@ emulateSysInstr(void)
       for (i=0; i<page1Count; i++) {
         opcode[page0Count + i] = plex86MemPtr[page1PAddr + i];
         }
+#endif
       }
     }
   else {
-    pAddr = plex86GuestCPU->eip; // Forget segmentation base for Linux.
-    if ( pAddr >= (plex86MemSize-16) ) {
-      fprintf(stderr, "emulateSysInstr: physical address of 0x%x "
+    Bit8u *phyPagePtr;
+
+    pAddr = EIP; // Forget segmentation base for Linux.
+    if ( pAddr >= (vm->pages.guest_n_bytes-16) ) {
+      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
               "beyond memory.\n", pAddr);
-      return 0; // Fail.
       }
-    // Draw in 16 bytes from guest memory.  No boundary checks are
-    // necessary since paging is off and the check above makes sure
-    // we don't overrun the physical memory bounds.
+    pOff = pAddr & 0xfff;
+    if ( pOff <= 0xff0 ) {
+      monpanic(vm, "emulateSysInstr: physical address of 0x%x "
+              "crosses page boundary.\n", pAddr);
+      }
+
+    // Draw in 16 bytes from guest memory into a local array so we don't
+    // have to worry about edge conditions when decoding.  All accesses are
+    // within a single physical page.
+    // Fixme: we could probably use the linear address (corrected for
+    // Fixme: monitor CS.base) to access the page without creating a window.
+    /* Open a window into guest physical memory. */
+    phyPagePtr = (Bit8u*) open_guest_phy_page(vm, pAddr>>12,
+                              vm->guest.addr.tmp_phy_page0);
     opcodeDWords = (Bit32u*) &opcode[0];
-    opcodeDWords[0] = * (Bit32u*) &plex86MemPtr[pAddr+ 0];
-    opcodeDWords[1] = * (Bit32u*) &plex86MemPtr[pAddr+ 4];
-    opcodeDWords[2] = * (Bit32u*) &plex86MemPtr[pAddr+ 8];
-    opcodeDWords[3] = * (Bit32u*) &plex86MemPtr[pAddr+12];
+    opcodeDWords[0] = * (Bit32u*) &phyPagePtr[pOff+ 0];
+    opcodeDWords[1] = * (Bit32u*) &phyPagePtr[pOff+ 4];
+    opcodeDWords[2] = * (Bit32u*) &phyPagePtr[pOff+ 8];
+    opcodeDWords[3] = * (Bit32u*) &phyPagePtr[pOff+12];
     }
 
 decodeOpcode:
@@ -328,6 +330,7 @@ decodeOpcode:
   b0 = opcode[iLen++];
   // fprintf(stderr, "instruction @ addr=0x%x is 0x%x\n", pAddr, b0);
   switch (b0) {
+#if 0
     case 0x0f: // 2-byte escape.
       {
       unsigned b1;
@@ -609,6 +612,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         }
       break;
       }
+#endif
 
     case 0x9b: // FWAIT
       {
@@ -617,6 +621,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       return 0;
       }
 
+#if 0
     case 0xcd: // int Ib
       {
       unsigned Ib;
@@ -639,6 +644,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       doIRET();
       return 1; // OK
       }
+#endif
 
     case 0xdb: // ESC3 (floating point)
       {
@@ -652,7 +658,7 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
         // FSETPM (essentially a fnop)
         goto advanceInstruction;
         }
-      fprintf(stderr, "ESC3: next=0x%x unsupported.\n", modrm);
+      monprint(vm, "ESC3: next=0x%x unsupported.\n", modrm);
       return 0;
       }
 
@@ -662,14 +668,15 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       modrm = opcode[iLen++];
       if (modrm == 0xe0) {
         // F(N)STSW AX : (Fixme, faked out to think there is no FPU for now)
-        plex86GuestCPU->genReg[GenRegEAX] = 0x0000ffff;
-        // plex86GuestCPU->genReg[GenRegEAX] = 0; // FPU exists.
+        guestStackContext->eax = 0x0000ffff;
+        // guestStackContext->eax = 0; // FPU exists.
         goto advanceInstruction;
         }
-      fprintf(stderr, "ESC7: next=0x%x unsupported.\n", modrm);
+      monprint(vm, "ESC7: next=0x%x unsupported.\n", modrm);
       return 0;
       }
 
+#if 0
     case 0xe4: // IN_ALIb
       {
       unsigned port8;
@@ -781,19 +788,19 @@ fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
       doGuestInterrupt(vm, vector, 0, 0);
       return 1;
       }
+#endif
 
     default:
-      fprintf(stderr, "emulateSysInstr: default b0=0x%x\n", b0);
-      return 0;
+      monpanic(vm, "emulateSysInstr: default b0=0x%x\n", b0);
+      return 0; // Fail.
     }
   return 0; // Fail.
 
 advanceInstruction:
-  plex86GuestCPU->eip += iLen;
+  EIP += iLen;
 
   return 1; // OK.
 }
-#endif
 
   void
 emulateUserInstr(vm_t *vm)
@@ -1234,7 +1241,8 @@ fetchGuestDescBySel(vm_t *vm, selector_t sel, descriptor_t *desc)
                             vm->guest.addr.tmp_phy_page0);
   *desc = * (descriptor_t *) &phyPagePtr[descriptorPAddr & 0xfff];
   if (desc->dpl != sel.fields.rpl) {
-    monpanic(vm, "fetchGuestDesc: descriptor.dpl != selector.rpl.\n");
+    monpanic(vm, "fetchGuestDesc: descriptor.dpl(%u) != selector.rpl(%u).\n",
+             desc->dpl, sel.fields.rpl);
     }
   return( desc );
 }
@@ -1466,7 +1474,7 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
   // Push CS
   // Push EIP
   writeGuestDWord(vm, esp+8,  oldEFlags);
-  writeGuestDWord(vm, esp+4,  guestStackContext->cs);
+  writeGuestDWord(vm, esp+4,  (guestStackContext->cs & ~3) | fromCPL);
   writeGuestDWord(vm, esp+0,  guestStackContext->eip);
 
   // If this fault has an associated error code, push that on the stack also.

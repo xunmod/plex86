@@ -1049,7 +1049,8 @@ loadGuestSegment(unsigned sreg, unsigned selector)
     }
   gdtEntryPtr = (descriptor_t *) &plex86MemPtr[descriptorPAddr];
   if (gdtEntryPtr->dpl != rpl) {
-    fprintf(stderr, "loadGuestSegment: descriptor.dpl != selector.rpl.\n");
+    fprintf(stderr, "loadGuestSegment: descriptor.dpl(%u) != selector.rpl(%u).\n",
+            gdtEntryPtr->dpl, rpl);
     return 0; // Fail.
     }
   plex86GuestCPU->sreg[sreg].sel.raw = selector;
@@ -1170,7 +1171,8 @@ fetchGuestDescriptor(selector_t sel)
     }
   gdtEntryPtr = (descriptor_t *) &plex86MemPtr[descriptorPAddr];
   if (gdtEntryPtr->dpl != sel.fields.rpl) {
-    fprintf(stderr, "fetchGuestDesc: descriptor.dpl != selector.rpl.\n");
+    fprintf(stderr, "fetchGuestDesc: descriptor.dpl(%u) != selector.rpl(%u).\n",
+            gdtEntryPtr->dpl, sel.fields.rpl);
     goto error;
     }
   return( gdtEntryPtr );
