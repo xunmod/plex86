@@ -1,0 +1,161 @@
+Q: What is this new plex86?
+
+A: It is a very lightweight x86 virtualization strategy which executes
+   x86 code as-is, but inside a virtualization container.  It does not
+   use any dynamic translation nor dynamic code scanning techniques to
+   deal with unvirtualizable x86 instructions.  But rather executes only
+   code which is virtualizable by nature.  As well, this new architecture
+   does not model the IO hardware.
+
+   The x86 ISA (Instruction Set Architecture) is not 100% virtualizable,
+   especially with respect to system code.  To build an x86 VM which can
+   execute arbitrary binary-only OSes and related software on current
+   x86 hardware requires a lot of software complexity to overcome the 
+   unvirtualizability of the x86 ISA.  And would also require that
+   reasonably complete IO modeling be implemented, as the guest OS
+   executing within the VM needs to drive a distinct set of hardware
+   which can not conflict with the host hardware.
+
+   But Linux (and perhaps other OSes) require extremely few modifications
+   to make it execute within the plex86 VM, and can be configured easily
+   to trim out unnecessary IO hardware and CPU support which would otherwise
+   require a heavy VM.  What remains is a very lightweight and highly
+   virtualized Linux VM resource which is completely untied from the
+   host hardware.  And in fact, rather than model IO hardware for
+   functions such as networking/disk/console, special Linux guest drivers
+   communicate packets from the guest to the host via a HAL (Hardware
+   Abstraction Layer).  This makes the VM very simplistic and abstracted
+   from IO hardware.  It can also be more efficient, as no IO emulation
+   is necessary.
+
+   One of the ways that plex86 achieves this simple strategy is that
+   it executes kernel code at user privilige where many system instructions
+   will naturally generate exceptions and can be monitored.
+
+   The modifications to Linux necessary to make it VM'able within plex86
+   actually only affect the Makefiles, adding an extra compile option
+   which forces the inclusion of an assembly macro file.  This file
+   redefines the meaning of a few instructions, notably PUSHF/POPF, because
+   their behaviour with respect to the interrupt flag is broken.
+
+   Another use of this lightweight style x86 virtualization is to accelerate
+   an x86 emulator (like bochs), for those parts of execution (for
+   example application code) where heavy virtualization is not necessary.
+   Execution of system code and IO can be left to the emulator to handle.
+
+
+Q: Why do I have to recompile Kernel to run it on a Virtual Machine ?
+
+A: Well, first to compile out all the non modularized IO.  But this is
+   only a matter of running 'make xconfig' or your preferred kernel
+   configuration method.  Having IO expectations is antithetical to
+   this kind of VM.  IO should be communicated between the guest and
+   host via the HAL, and thus clean communications without any need for
+   IO emulation can occur and the VM can be kept very lightweight.
+
+   Second, essentially because Intel broke the semantics for handling
+   the interrupt flags (EFLAGS.IF) for a few instructions (like
+   PUSHF/POPF) while using PVI (protected mode virtual interrupts).  PVI
+   is the protected mode counterpart to VME for v8086 mode.  It lets
+   application privilege code manipulate the interrupt flag without
+   generating as many exceptions for higher performance processing,
+   and is great for just such a thing as virtualization.  However,
+   strangely enough, while it works well for the STI/CLI instructions,
+   PUSFH/POPF/IRET have broken semantics even though they are implemented
+   properly for VME and the same semantics are what are needed.  Go
+   figure.  Anyways, a couple macros do the trick, expanding out to
+   a few instructions which implement the correct semantics.
+
+
+Q: How is plex86 different from UML, VMware, BOCHS and Wine ?
+
+A: UML is essentially a separate port of Linux such that both
+   the guest kernel and user layers both run as a host user process.
+   That port of Linux knows how to manage virtual memory and such
+   by way of using host intrinsics, available to normal user processes.
+   Linux is not naturally a good host for virtual machines however,
+   and to achieve both speed and security at the same time, modifications
+   to Linux as a *host* are necessary.  UML is a very cool project which
+   deserves a great amount of credit.  Though, 2 downfalls for its
+   use in the commercial world (where you need speed+security) are that
+   1) it will take some time for the host kernel mods to make it into
+   the mainstream Linux development and 2) it is on the order of the least
+   tested Linux port.
+
+   VMware is a full x86 virtualization program which necessarily
+   uses stronger software techniques to overcome the virtualization
+   deficiencies of the x86 ISA, and models a full suite of IO hardware.
+   It carries a much heavier footprint for running guest operating systems
+   like Linux, but has the goal of running arbitrary x86 operating systems,
+   so for its goals a larger footprint is justified.
+
+   Bochs is a pure user-space emulator, which is highly portable and
+   runs on many platforms.  It is quite slow in comparison to other solutions
+   as it is an emulator.  There is the potential to use plex86 as an
+   accelerator for bochs, as was demonstrated some time ago.
+
+   Wine runs Windows applications and translates Windows OS and GUI calls
+   into *nix and X windows calls.
+
+   Plex86 has the goal of running the standard x86 port of Linux, minus
+   the macros which expand a few instructions.  All the x86 Linux port
+   internals (such as virtual memory) are used as-is.  This has great
+   benefits as this port is the most widely used and debugged port on
+   Earth.
+
+
+Q: How do I get a patch commited to CVS?
+
+A: Post it to the developers list, unless it is sizeable in which
+   case put it online somewhere and post a URL to the patch.
+
+
+Q: Where can I find some good Virtual Machine Papers ?
+
+A: The new plex86 mission is out of the market of heavy VMs, so a number
+   of papers would be irrelevant.  Most of the techniques needed by plex86
+   relate to x86 deficiencies in the virtualization department, and are very
+   specific to x86 for that reason.  Ultimately we will have to build some
+   documentation for plex86 internals.  But for VMs in general, I leave
+   you to Google and your own devices.
+
+
+Q: What uses are there (do you forsee) for Plex86?
+
+A: Many.  In the data center computing environment, virtual resources
+   are key.  There, you don't want the guest rooted to the actual hardware.
+   You want to be able to spin up and shut down resources anywhere, anytime
+   according to computing demands.  The idea of shuttling all data between
+   guest and host via the HAL is a perfect match for this environment.
+   And as well, lightweight VMs help solve the underutilization and
+   overprovisioning problems of the datacenter, by allowing physical
+   server resources to be carved into multiple virtual ones.
+
+   For developers, it would also be quite handy to have several Linux
+   VMs available, each one with a different version/vendor/configuaration.
+   Same rationale for support call-centers who need to have many configurations
+   on-hand at any one time.
+
+   For security, it might be handy to do your Internet browsing experience
+   inside a Linux VM, as a method of containment.
+
+   There are many other interesting potentials.  For example, there is a
+   trend towards mobile computing in the workplace.  Being able to sit
+   any any machine and "check-in" a VM from a server, from any location,
+   I believe will prove to be quite interesting.  Plex86 certainly has the
+   potential to fit well into that model.
+
+
+Q: Who came up with the idea for this so that I can leave all my worldly 
+   posessions to them when I pass on?
+
+A: IBM essentially.  They've been doing this since the 1960's.
+   I believe the concept of having a virtualizable system, and the HAL
+   idea is theirs.  Of course, it helps to build a platform from the
+   ground up to be virtualizable.  So plex86 has to do some extra work
+   on the x86 platform.  Fortunately, The Open Source nature
+   of Linux and friends, allows us to fix a few things that it needs
+   to be virtualizable, rather than do a tremendous amount of work to
+   fix many corner cases that it doesn't need, as well as eliminate all the
+   IO modeling.  But, you should still leave your worldly possessions to
+   me, because IBM already has plenty of money.
