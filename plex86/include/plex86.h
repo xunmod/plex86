@@ -195,7 +195,6 @@ typedef struct {
   cr0_t cr0;
   Bit32u cr1, cr2, cr3;
   cr4_t cr4;
-  unsigned a20Enable;
   unsigned INTR;
 
   sysEnter_t   sysEnter;
@@ -241,7 +240,7 @@ typedef Bit32u phyAddr_t;
 #define Plex86NoExecute_CR0       2
 #define Plex86NoExecute_CR4       3
 #define Plex86NoExecute_CS        4
-#define Plex86NoExecute_A20       5
+
 #define Plex86NoExecute_Selector  6
 #define Plex86NoExecute_DPL       7
 #define Plex86NoExecute_EFlags    8

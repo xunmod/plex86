@@ -311,13 +311,6 @@ plex86_ioctl(dev_t dev, u_long cmd, caddr_t data, int flags,
 	case PLEX86_SETINTR:
 		ioctlSetIntr(vm, *(unsigned long *)data);
 		break;
-	case PLEX86_SET_A20:
-	{
-		unsigned long arg = *(unsigned long *)data;
-		if (!ioctlSetA20E(vm, arg))
-			return EINVAL;
-		break;
-	}
 	case PLEX86_MESSAGEQ:
 	{
 		vm_messages_t msg;

@@ -368,9 +368,6 @@ typedef struct {
     unsigned   INTR; /* Interrupt line. */
     Bit64u     t0; /* TSC before excecution of guest code */
     Bit64u     cyclesElapsed; /* Cycles of guest execution */
-    unsigned   a20Enable;    /* A20 line enabled? */
-    Bit32u     a20AddrMask;  /* mask to apply to phy address */
-    Bit32u     a20IndexMask; /* mask to apply to phy address */
     } system;
 
   struct {
@@ -386,12 +383,6 @@ typedef struct {
     } io;
 
   cpuid_info_t guestCPUIDInfo;
-
-/* This macro yields a physical address after applying the A20 line
- * enable mask to the original physical address.
- */
-#define A20Addr(vm, paddr) ( (paddr) & ((vm)->system.a20AddrMask) )
-#define A20PageIndex(vm, pi) ( (pi) & ((vm)->system.a20IndexMask) )
 
   /* Keep an index of the next available Page Table */
   unsigned  ptbl_laddr_map_i;

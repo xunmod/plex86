@@ -128,9 +128,6 @@ hostInitMonitor(vm_t *vm)
   vm->kernel_offset = hostOSKernelOffset();
 
   vm->system.INTR = 0; /* Interrupt line off. */
-  vm->system.a20Enable = 1; /* Start with A20 line enabled. */
-  vm->system.a20AddrMask  = 0xffffffff; /* All address lines contribute. */
-  vm->system.a20IndexMask = 0x000fffff; /* All address lines contribute. */
 
   vm->io.cpuToPitRatio = 100;
   //vm->io.cpuToPitRatio = CPU_CLOCK_FREQ_HZ / PIT_CLOCK_FREQ_HZ;
@@ -1040,30 +1037,6 @@ handleFailSegReg:
       goto handleFail;
       }
     }
-
-  /* A20 line must be enabled. */
-  if ( guest_cpu->a20Enable != 1 ) {
-    retval = Plex86NoExecute_A20; /* Fail. */
-    goto handleFail;
-    }
-
-  /* Some code not really used now, since we only support A20 being enabled. */
-  {
-  unsigned newA20Enable;
-  newA20Enable = guest_cpu->a20Enable > 0; /* Make 0 or 1. */
-  if ( newA20Enable != vm->system.a20Enable ) {
-    if ( (!newA20Enable) && guest_cpu->cr0.fields.pg ) {
-      /* A20 disabled, paging on not supported.  Well, really I have to
-       * see if it matters.  This check was in old plex86 code.
-       */
-      retval = Plex86NoExecute_A20; /* Fail. */
-      goto handleFail;
-      }
-    vm->system.a20Enable = newA20Enable;
-    vm->system.a20AddrMask  = 0xffefffff | (newA20Enable << 20);
-    vm->system.a20IndexMask = 0x000ffeff | (newA20Enable << 8);
-    }
-  }
 
   /* EFlags constraints:
    *   VIP/VIF==0
@@ -2061,7 +2034,7 @@ hostInitShadowPaging(vm_t *vm)
 /*phy_page_usage_t *pusage;*/
 
 #if 0
-  cr3_page_index = A20Addr(vm, vm->guest_cpu.cr3) >> 12;
+  cr3_page_index = vm->guest_cpu.cr3 >> 12;
   if ( cr3_page_index >= vm->pages.guest_n_pages)
     xxxpanic(vm, "monPagingRemap: CR3 conflicts with monitor space\n");
 #endif

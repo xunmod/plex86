@@ -336,7 +336,7 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
     /* Check out the guest's mapping of this address to see if it
      * if would allow for an access.  First, get the guest PDE.
      */
-    guest_pdir_page_index = A20Addr(vm, vm->guest.addr.guest_cpu->cr3) >> 12;
+    guest_pdir_page_index = vm->guest.addr.guest_cpu->cr3 >> 12;
     if (guest_pdir_page_index >= vm->pages.guest_n_pages)
       monpanic(vm, "mapGuestLinAddr: PG=1 guest PDE OOB\n");
     /* Open a window into guest physical memory */
@@ -368,7 +368,7 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
       }
 
     /* Get the guest PTE. */
-    ptbl_ppi = A20PageIndex(vm, guestPDE.fields.base);
+    ptbl_ppi = guestPDE.fields.base;
     if (ptbl_ppi >= vm->pages.guest_n_pages)
       monpanic(vm, "mapGuestLinAddr: PG=1 guest PTE OOB\n");
     guestPTbl = open_guest_phy_page(vm, ptbl_ppi,
@@ -424,12 +424,12 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
       guestPTbl[pti] = guestPTE;
       }
     
-    *guest_ppi = A20PageIndex(vm, guestPTE.fields.base);
+    *guest_ppi = guestPTE.fields.base;
     }
   else {
     /* guest paging is off, linear address is physical address */
     guest_pdir_page_index = 0; /* keep compiler quiet */
-    *guest_ppi = A20PageIndex(vm, guest_lpage_index);
+    *guest_ppi = guest_lpage_index;
     }
   if (*guest_ppi >= vm->pages.guest_n_pages)
     return(MapLinPPageOOB);
@@ -458,14 +458,14 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
       phyPageInfo_t *pde_pusage;
 
       pde_pusage =
-          getPageUsage(vm, A20PageIndex(vm, guestPDE.fields.base));
+          getPageUsage(vm, guestPDE.fields.base);
       if (pde_pusage->attr.raw & PageBadUsage4PTbl) {
 
 // Fixme: PDE->PDir hack.
 monpanic(vm, "PDE->PDir hack.\n");
 //monpanic(vm, "PDE.base=0x%x CR3=0x%x\n",
-//         A20PageIndex(vm, guestPDE.fields.base),
-//         A20Addr(vm, vm->guest.addr.guest_cpu->cr3) );
+//         guestPDE.fields.base,
+//         vm->guest.addr.guest_cpu->cr3 );
 return(MapLinEmulate);
         }
 

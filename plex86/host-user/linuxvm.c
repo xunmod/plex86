@@ -588,9 +588,6 @@ initLinuxCPUMemenvironment(void)
 {
   gdt_entry_t *gdt;
 
-  // A20 line enabled.
-  plex86GuestCPU->a20Enable = 1;
-
   // ======
   // Memory
   // ======
@@ -679,9 +676,6 @@ executeLoop:
         break;
       case Plex86NoExecute_CS:
         fprintf(stderr, "bad CS value.\n");
-        break;
-      case Plex86NoExecute_A20:
-        fprintf(stderr, "bad A20 enable value.\n");
         break;
       case Plex86NoExecute_Selector:
         fprintf(stderr, "bad selector value.\n");
