@@ -541,7 +541,7 @@ guestPageFault(vm_t *vm, guest_context_t *context, Bit32u cr2)
     case MapLinException:
       //monprint(vm, "guestPageFault: MLE: cr2=0x%x.\n", cr2);
       vm->guest.addr.guest_cpu->cr2 = cr2;
-      toHostGuestFault(vm, ExceptionPF, error);
+      doGuestFault(vm, ExceptionPF, error);
       return;
 
     default:

@@ -267,10 +267,7 @@ monpanic(vm, "handleGuestFault: emulate_exception was here.\n");
     case ExceptionOF: /* 4 */
     case ExceptionNM: /* 7 */
     case ExceptionMF: /* 16 */
-      toHostGuestFault(vm, context->vector, 0);
-      /*monpanic(vm, "handleGuestFault: DE/BP/OF/NM/MF unfinished.\n");*/
-      /*monpanic(vm, "handleGuestFault: %u\n", context->vector);*/
-      /* emulate_interrupt(vm, context->vector); */
+      doGuestFault(vm, context->vector, 0);
       break;
 
     case ExceptionNP: /* 11 */
@@ -284,7 +281,7 @@ monpanic(vm, "handleGuestFault: NP/SS/AC unfinished.\n");
 
     case ExceptionUD: /* 6 */
     case ExceptionGP: /* 13 */
-      toHostGuestFault(vm, context->vector, 0);
+      doGuestFault(vm, context->vector, 0);
       break;
 
     case ExceptionPF: /* 14 */

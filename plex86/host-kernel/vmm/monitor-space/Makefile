@@ -8,7 +8,7 @@
 include ../../../Rules.make
 
 inc_dirs := -I../../../include -I../../include
-objs := fault-mon.o monitor-mon.o paging-mon.o panic-mon.o print-mon.o
+objs := fault.o monitor.o paging.o panic.o print.o x86-emu.o
 
 .c.o:
 	$(HOST_KERNEL_CC) -c $(HOST_KERNEL_CFLAGS) $(inc_dirs) $<
