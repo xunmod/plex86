@@ -8,7 +8,8 @@ CFLAGS="-Wall -Wstrict-prototypes -Wno-trigraphs -O2 -fno-strict-aliasing -fno-c
 export HOST_KERNEL_CFLAGS="${CFLAGS}"
 export HOST_USER_CFLAGS="${CFLAGS}"
 
-export GUEST_KERNEL_CFLAGS="${CFLAGS}"
-export GUEST_USER_CFLAGS="${CFLAGS}"
+export GUEST_KERNEL_CFLAGS="none"
+export GUEST_USER_CFLAGS="none"
+export GUEST_VERSION="none"
 
 ./configure -with-host-stubs

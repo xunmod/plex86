@@ -26,7 +26,7 @@
   int
 main(int argc, char *argv[])
 {
-  vm_t *vm = NULL;
+  void *vm = NULL;
 
   hostModuleInit();
   hostDeviceOpen(vm);
@@ -35,12 +35,12 @@ main(int argc, char *argv[])
 }
 
   void
-hostOSReservePhyPages(vm_t *vm, Bit32u *hostPhyPages, unsigned nPages)
+hostOSReservePhyPages(void *vm, Bit32u *hostPhyPages, unsigned nPages)
 {
 }
 
   void
-hostOSUnreservePhyPages(vm_t *vm, Bit32u *hostPhyPages, unsigned nPages)
+hostOSUnreservePhyPages(void *vm, Bit32u *hostPhyPages, unsigned nPages)
 {
 }
 
@@ -107,7 +107,7 @@ hostOSKernelOffset(void)
 }
 
   void
-hostOSModuleCountReset(vm_t *vm, void *inode, void *filp)
+hostOSModuleCountReset(void *vm, void *inode, void *filp)
 {
 }
 
@@ -136,14 +136,14 @@ hostOSCopyToUserIoctl(void *to, void *from, unsigned long len)
 }
 
   Bit32u
-hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
+hostOSGetAndPinUserPage(void *vm, Bit32u userAddr, void **osSpecificPtr,
                       Bit32u *ppi, Bit32u *kernelAddr)
 {
   return 0;
 }
 
   void
-hostOSUnpinUserPage(vm_t *vm, Bit32u userAddr, void *osSpecificPtr,
+hostOSUnpinUserPage(void *vm, Bit32u userAddr, void *osSpecificPtr,
                           Bit32u ppi, Bit32u *kernelAddr, unsigned dirty)
 {
 }
