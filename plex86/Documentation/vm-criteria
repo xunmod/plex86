@@ -1,0 +1,8 @@
+Guest:
+
+  o Must not use int $0xff.  This is used by the HAL layer as a special
+    instruction to request HAL services.  If need be, we could find another
+    interrupt which is free across all the interesting guest OSes, or
+    perhaps make it configurable.
+
+Host:
