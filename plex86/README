@@ -51,6 +51,19 @@ be used in 2 ways:
   'configure'.  Please use the 'doconfigure' front-end, rather than running
   configure yourself.
 
+./donull:
+
+  For the purposes of maintaining a set of 'null' routines (stubs) for the
+  host-OS specific call-outs, you can configure plex86 to compile the
+  VM monitor against these empty routines.  This isn't useful as far as
+  executing code goes.  It's only a maintenance mechanism to make sure
+  that the null routines are kept up-to-date.  These serve as a reference
+  (starting point) for new host ports.  This script runs ./configure with
+  the necessary options/environment for this purpose.  We should run this
+  often, since when the 'null' port is broken, likely other ports are
+  as well.  Such interface breakage should be reported to the teams working
+  on the other ports.
+
 ./Documentation:
 
   The documentation tree for plex86.  Read '00-INDEX' for further information.

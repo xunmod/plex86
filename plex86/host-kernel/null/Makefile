@@ -17,30 +17,21 @@
 #  License along with this library; if not, write to the Free Software
 #  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-.PHONY: all local-clean clean dist-clean
+.PHONY: clean dist-clean all
 
-include ../Rules.make
+include ../../Rules.make
 
-subdirs := vmm $(HOST_OS)
-subdirlibs := vmm/vmm.o $(HOST_OS)/$(HOST_OS).o
-
-all:
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir ; done
-	@$(MAKE) plex86.o
-ifeq ($(HOST_OS), null)
-	/bin/rm -f a.out
-	$(HOST_KERNEL_CC) -o a.out $(subdirlibs)
-endif
+INC_DIRS = -I../../include -I../include
+OBJS = null.o
 
 
-plex86.o: $(subdirlibs)
-	$(LD) -r -o $@ $^
+.c.o:
+	$(HOST_KERNEL_CC) -c $(HOST_KERNEL_CFLAGS) $(INC_DIRS) $<
 
-local-clean:
-	@/bin/rm -f *.o a.out
 
-clean: local-clean
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir clean ; done
+all: $(OBJS)
 
-dist-clean: local-clean
-	@for subdir in $(subdirs); do $(MAKE) -C $$subdir dist-clean ; done
+clean:
+	@/bin/rm -f *.o *.s
+
+dist-clean: clean

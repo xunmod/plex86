@@ -27,6 +27,12 @@ INC_DIRS = -I../include
 .c.o:
 	$(HOST_USER_CC) -c $(HOST_USER_CFLAGS) $(INC_DIRS) $<
 
+ifeq ($(HOST_OS), null)
+# For a null host, we are only compiling kernel stuff.  NOP.
+all:
+
+endif
+
 $(EXE): linuxvm.o io.o hal-user.o x86-emu.o
 	$(HOST_USER_CC) -o $@ $^
 
