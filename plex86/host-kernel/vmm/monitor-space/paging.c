@@ -148,7 +148,7 @@ getFreePageTable(vm_t *vm, unsigned pdi)
 
 
   /* For a given PDI, return the page-list index of the page used
-   * for a page table.  Really this doesn't need to be a function,
+   * for a page table.  Fixme: really this doesn't need to be a function,
    * since it's one line of code, but it is a good place to insert
    * sanity checks for now.
    */
@@ -215,6 +215,63 @@ close_guest_phy_page(vm_t *vm, Bit32u ppi)
   /* +++ */
 }
 
+  void
+invalidateGuestLinAddr(vm_t *vm, Bit32u guestLinAddr)
+{
+  // For a given guest linear address (and assuming a flat guest 32-bit
+  // segment with base of 0), invalidate the TLB for this linear address
+  // and remove the corresponding shadow page table entry (if it exists)
+  // since it is no longer valid for this guest address.
+
+  Bit32u       pdi, pti;
+  Bit32u       guest_lpage_index;
+  page_t      *monPTbl;
+  pageEntry_t *monPDE, *monPTE;
+  unsigned     pt_index;
+
+  // Sanity check that paging is on.
+  if ( vm->guest.addr.guest_cpu->cr0.fields.pg == 0 ) {
+    monpanic(vm, "invGuestLinAddr: CR0.pg=0?\n");
+    }
+
+  guest_lpage_index = guestLinAddr >> 12;
+  pdi = guest_lpage_index >> 10;
+  pti = guest_lpage_index & 0x3ff;
+  monPDE = &vm->guest.addr.page_dir[pdi];
+
+  /* Check monitor PDE */
+  if (monPDE->fields.P == 0) {
+    goto done; // No (monitor) shadow PDE.
+    }
+
+  /* This laddr should not conflict with monitor space.  This is not
+   * critical since it's only a TLB entry flush, but for good measure...
+   */
+  if ( (guestLinAddr & 0xffc00000) == vm->mon_pde_mask )
+    monpanic(vm, "invGuestLinAddr: address(0x%x) conflicts with monitor.\n",
+             guestLinAddr);
+
+  pt_index = getMonPTi(vm, pdi, 12);
+  monPTbl = &vm->guest.addr.page_tbl[pt_index];
+
+  monPTE = &monPTbl->pte[pti];
+
+  /* Check monitor PTE */
+  if (monPTE->fields.P == 0) {
+    goto done; // No (monitor) shadow PTE.
+    }
+
+  // Clear the PTE.  This will force a re-shadow next time the page is
+  // accessed, given the TLB entry is flushed below.
+  monPTE->raw = 0;
+
+  // Note, the corresponding page table may be in use by other
+  // linear addresses, so don't return it to the free pool!
+
+done:
+  // The shadow page table entry is cleared.  Now invalidate the TLB entry.
+  invlpg_mon_offset( Guest2Monitor(vm, guestLinAddr) );
+}
 
   unsigned
 mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,

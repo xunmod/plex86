@@ -18,6 +18,9 @@
 //   Change guest_cpu_t and others to guestCpu_t
 //   Need checks for 32-bit-span base/limit everywhere segments are reloaded.
 
+// Fixme: Eliminate vm->linuxVMMode for code which should not be called
+// Fixme: while in that mode.
+// Fixme: Convert nexus->mon_cr4 to cr4_t.
 
 // ===================
 // Defines / typesdefs
@@ -69,7 +72,7 @@ static descriptor_t *fetchGuestDescByLAddr(vm_t *, Bit32u laddr,
 static unsigned  inp(vm_t *, unsigned iolen, unsigned port);
 static void      outp(vm_t *, unsigned iolen, unsigned port, unsigned val);
 
-//static void      doIRET(void);
+static void      doIRET(vm_t *vm);
 static unsigned  doWRMSR(vm_t *vm);
 
 static void guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t selector);
@@ -374,7 +377,7 @@ monprint(vm, "GDTR.limit = 0x%x.\n", limit16);
                 monprint(vm, "INVLPG: mod=3.\n");
                 return 0;
                 }
-              invlpg_mon_offset( Guest2Monitor(vm, modRM.addr) );
+              invalidateGuestLinAddr(vm, modRM.addr);
               goto advanceInstruction;
               }
             }
@@ -569,11 +572,8 @@ return 0; // defer to user space implementation for now.
 
     case 0xcf: // IRET
       {
-return 0; // defer to user space implementation for now.
-#if 0
-      doIRET();
+      doIRET(vm);
       return 1; // OK
-#endif
       }
 
     case 0xdb: // ESC3 (floating point)
@@ -1497,168 +1497,215 @@ doGuestInterrupt(vm_t *vm, unsigned vector, unsigned intFlags, Bit32u errorCode)
 }
 
 
-#if 0
   void
-doIRET(void)
+doIRET(vm_t *vm)
 {
-  Bit32u        retEIP, retEFlags, esp, ifFlags;
-  selector_t    retCS;
-  descriptor_t *csDescPtr, *ssDescPtr;
-  unsigned      fromCPL;
-  const unsigned fromIOPL=0; // Only allow guest IOPL==0.
-  Bit32u        changeMask;
+  Bit32u         toEIP, esp;
+  eflags_t       toEFlags;
+  selector_t     toCS;
+  descriptor_t   csDesc, *csDescPtr, ssDesc, *ssDescPtr;
+  unsigned       fromCPL;
+  Bit32u         changeMask;
+  guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
+  nexus_t *nexus = vm->guest.addr.nexus;
 
   fromCPL = CPL; // Save the source CPL since we overwrite it.
 
-  if ( plex86GuestCPU->eflags & FlgMaskVIF ) {
-    monprint(vm, "doIRET: VIF=1.\n");
-    goto error;
-    }
-  if ( plex86GuestCPU->eflags & FlgMaskNT ) {
+  if ( guestStackContext->eflags.fields.nt ) {
     // NT=1 means return from nested task.
-    monprint(vm, "doIRET: NT=1.\n");
-    goto error;
+    monpanic(vm, "doIRET: NT=1.\n");
     }
-  esp = plex86GuestCPU->genReg[GenRegESP];
-  retEIP     = getGuestDWord(esp+0);
-  retCS.raw  = getGuestWord(esp+4);
-  retEFlags  = getGuestDWord(esp+8);
-  ifFlags    = retEFlags & (FlgMaskVIF | FlgMaskIF);
-  if ( ifFlags == (FlgMaskVIF | FlgMaskIF) ) {
-    // Both IF/VIF are set.
-    retEFlags &= ~FlgMaskVIF;
-    }
-  else if ( ifFlags!=0 ) {
-    monprint(vm, "doIRET: VIF!=IF: 0x%x.\n", retEFlags);
-    }
+  esp          = guestStackContext->esp;
+  toEIP        = getGuestDWord(vm, esp+0);
+  toCS.raw     = getGuestWord(vm,  esp+4);
+  toEFlags.raw = getGuestDWord(vm, esp+8);
 
-  if ( retEFlags & FlgMaskVM ) {
+  if ( toEFlags.fields.vm ) {
     // IRET to v86 mode not supported.
-    monprint(vm, "doIRET: return EFLAGS.VM=1.\n");
-    goto error;
+    monpanic(vm, "doIRET: return EFLAGS.VM=1.\n");
     }
-  if ( retEFlags & FlgMaskIOPL ) {
+  if ( toEFlags.fields.iopl ) {
     // IRET eflags value has IOPL non-zero.
-    monprint(vm, "doIRET: return EFLAGS.IOPL=%u.\n", (retEFlags>>12)&3);
-    goto error;
+    monpanic(vm, "doIRET: return EFLAGS.IOPL=%u.\n", toEFlags.fields.iopl);
     }
-  if ( (retCS.raw & 0xfffc) == 0 ) {
-    monprint(vm, "doIRET: return CS NULL.\n");
-    goto error;
+  if ( (toCS.raw & 0xfffc) == 0 ) {
+    monpanic(vm, "doIRET: return CS NULL.\n");
     }
-  if ( ((retCS.fields.rpl!=0) && (retCS.fields.rpl!=3)) || retCS.fields.ti ) {
-    monprint(vm, "doIRET: bad return CS=0x%x.\n", retCS.raw);
-    goto error;
+  if ( ((toCS.fields.rpl!=0) && (toCS.fields.rpl!=3)) || toCS.fields.ti ) {
+    monpanic(vm, "doIRET: bad return CS=0x%x.\n", toCS.raw);
     }
-  if ( retCS.fields.rpl < fromCPL ) {
+  if ( toCS.fields.rpl < fromCPL ) {
     // Can not IRET to an inner ring.
-    monprint(vm, "doIRET: to rpl=%u from CPL=%u.\n", retCS.fields.rpl, CPL);
-    goto error;
+    monpanic(vm, "doIRET: to rpl=%u from CPL=%u.\n", toCS.fields.rpl, CPL);
     }
-  csDescPtr = fetchGuestDescBySel(vm, retCS);
-  if ( (csDescPtr==NULL) ||
+  csDescPtr = fetchGuestDescBySel(vm, toCS, &csDesc, 0);
+  if ( (csDescPtr==0) ||
        (csDescPtr->type!=0x1a) ||
-       (csDescPtr->dpl!=retCS.fields.rpl) ||
+       (csDescPtr->dpl!=toCS.fields.rpl) ||
        (csDescPtr->p==0) ) {
-    monprint(vm, "doIRET: bad CS descriptor, type=0x%x, "
-                    "dpl=%u, p=%u.\n",
-                    csDescPtr->type, csDescPtr->dpl, csDescPtr->p);
-    goto error;
+    monpanic(vm, "doIRET: bad CS descriptor, type=0x%x, "
+                 "dpl=%u, p=%u.\n",
+                 csDescPtr->type, csDescPtr->dpl, csDescPtr->p);
     }
 
-  if ( retCS.fields.rpl > fromCPL ) {
+  if ( toCS.fields.rpl > fromCPL ) {
     // IRET to outer (user) privilege level.  We have to also
     // get SS:ESP from the kernel stack, and validate those values.
-    Bit32u     retESP;
-    selector_t retSS;
-    unsigned i, sReg;
-//monprint(vm, "doIRET: rpl=%u.\n", retCS.fields.rpl);
+    Bit32u     toESP;
+    selector_t toSS;
+//monprint(vm, "doIRET: rpl=%u.\n", toCS.fields.rpl);
 
-    retESP    = getGuestDWord(esp+12);
-    retSS.raw = getGuestWord(esp+16);
-    if ( (retSS.raw & 0xfffc) == 0 ) {
-      monprint(vm, "doIRET: return SS NULL.\n");
-      goto error;
+    toESP    = getGuestDWord(vm, esp+12);
+    toSS.raw = getGuestWord(vm,  esp+16);
+    if ( (toSS.raw & 0xfffc) == 0 ) {
+      monpanic(vm, "doIRET: return SS NULL.\n");
       }
-    if ( retSS.fields.rpl != retCS.fields.rpl ) {
-      monprint(vm, "doIRET: SS.rpl!=CS.rpl.\n");
-      goto error;
+    if ( toSS.fields.rpl != toCS.fields.rpl ) {
+      monpanic(vm, "doIRET: SS.rpl!=CS.rpl.\n");
       }
-    ssDescPtr = fetchGuestDescBySel(vm, retSS);
-    if ( (ssDescPtr==NULL) ||
+    ssDescPtr = fetchGuestDescBySel(vm, toSS, &ssDesc, 0);
+    if ( (ssDescPtr==0) ||
          (ssDescPtr->type!=0x12) ||
-         (ssDescPtr->dpl!=retCS.fields.rpl) ||
+         (ssDescPtr->dpl!=toCS.fields.rpl) ||
          (ssDescPtr->p==0) ) {
-      monprint(vm, "doIRET: bad SS descriptor, type=0x%x, "
+      monpanic(vm, "doIRET: bad SS descriptor, type=0x%x, "
                       "dpl=%u, p=%u.\n",
                       ssDescPtr->type, ssDescPtr->dpl, ssDescPtr->p);
-      goto error;
       }
 
-    plex86GuestCPU->sreg[SRegSS].sel = retSS;
-    plex86GuestCPU->sreg[SRegSS].des = * ssDescPtr;
-    plex86GuestCPU->sreg[SRegSS].valid = 1;
-    plex86GuestCPU->genReg[GenRegESP] = retESP;
+    // Need to set CPL before calling other functions which depend on it.
+    CPL = 3; // (toCS.fields.rpl)
+    guestStackContext->ss  = toSS.raw | 3; // Always push down to ring3.
+    guestStackContext->esp = toESP;
+    guestSelectorUpdated(vm, SRegSS, toSS);
 
-    // For an IRET to an outer ring (user code), if any of the other
-    // (non SS,CS) segment registers are loaded for the inner (system)
-    // ring, then they are invalidated for use in the new less privileged ring.
-    for (i=0; i<4; i++) {
-      sReg = dataSReg[i];
-      if ( plex86GuestCPU->sreg[sReg].valid ) {
-        if ( plex86GuestCPU->sreg[sReg].des.dpl < retCS.fields.rpl ) {
-          plex86GuestCPU->sreg[sReg].sel.raw = 0;
-          plex86GuestCPU->sreg[sReg].des = nullDesc;
-          plex86GuestCPU->sreg[sReg].valid = 0;
-          }
-        }
-      }
+    // For any data segment which has RPL not equal to the user level (3),
+    // nullify the segment by setting the selector to the NULL selector.
+    // Fixme: if the order of selector pushes changes, reorder this code.
+    if ( (guestStackContext->gs & 3) != 3 )
+      guestStackContext->gs = 0;
+    if ( (guestStackContext->fs & 3) != 3 )
+      guestStackContext->fs = 0;
+    if ( (guestStackContext->ds & 3) != 3 )
+      guestStackContext->ds = 0;
+    if ( (guestStackContext->es & 3) != 3 )
+      guestStackContext->es = 0;
     }
   else {
     // If IRET to same level, then ESP did not come off the kernel
     // stack.  We simple increment it to simulate the 3 dwords popped.
-    plex86GuestCPU->genReg[GenRegESP] += 12;
+    guestStackContext->esp += 12;
     }
 
   // All values have been fetched from the stack.  Proceed to load
   // CPU registers and descriptor cache values.
-  plex86GuestCPU->sreg[SRegCS].sel = retCS;
-  plex86GuestCPU->sreg[SRegCS].des = * csDescPtr;
-  plex86GuestCPU->sreg[SRegCS].valid = 1;
-  plex86GuestCPU->eip = retEIP;
+  guestStackContext->cs  = toCS.raw | 3; // Always push down to ring3.
+  guestStackContext->eip = toEIP;
+  guestSelectorUpdated(vm, SRegCS, toCS);
 
-//if (retCS.fields.rpl==3) {
+//if (toCS.fields.rpl==3) {
 //  monprint(vm, "iret to ring3, cs.slot=%u, eip=0x%x.\n",
-//          retCS.fields.index, retEIP);
+//          toCS.fields.index, toEIP);
 //  }
 
+  // EFlags bits which IRET will always modify according to the requested
+  // guest stack image value.  Note that IOPL is always
+  // required to be 0 in the guest for plex86, and thus never changed.
   changeMask = FlgMaskID | FlgMaskAC | FlgMaskRF | FlgMaskNT |
                FlgMaskOF | FlgMaskDF | FlgMaskTF | FlgMaskSF |
                FlgMaskZF | FlgMaskAF | FlgMaskPF | FlgMaskCF;
 // Fixme: remove
 if (changeMask != 0x254dd5) {
-  monprint(vm, "changeMask != 0x254dd5.\n");
-  goto error;
+  monpanic(vm, "changeMask != 0x254dd5.\n");
   }
 
-  // IOPL is changed according to the test below on a processor.  However,
-  // I disallow IOPL other than 0 above.
-  // if ( fromCPL == 0 )
-  //   changeMask |= FlgMaskIOPL;
-  if ( fromCPL <= fromIOPL )
-    changeMask |= FlgMaskIF;
-  plex86GuestCPU->eflags =
-    (plex86GuestCPU->eflags & ~changeMask) |
-    (retEFlags & changeMask);
+  //
+  // Code to deal with the values of EFLAGS.{VIP,VIF,IF} and CR4.PVI used
+  // by the monitor to return to guest execution.  VIP is actually set
+  // code in fault.c.
+  //
 
-  return;
+  // Note that IRET never allows CPL changes towards more privileged code.
+  if ( toCS.fields.rpl==0 ) {
+    // IRET ring0 --> ring0.  We will continue executing guest code
+    // using PVI mode.  Check that the eflags stack image contains the
+    // same values for IF and VIF - as a policy they are always pushed
+    // as the same value.
+    if ( toEFlags.fields.if_ != toEFlags.fields.vif ) {
+      monpanic(vm, "IRET: stack EFLAGS.vif!=if (0x%x).\n", toEFlags.raw);
+      }
+    // Sanity check that monitor already has CR4.PVI asserted.
+    if ( ! (nexus->mon_cr4 & (1<<1)) )
+      monpanic(vm, "IRET: r0 -> r0; mon CR4.PVI=0?\n");
+    
+    // In PVI mode, the processor virtualizes STI/CLI operations by operating
+    // on the EFLAGS.VIF field.  So we have to copy the new EFLAGS.IF value
+    // as requested by the guest, to EFLAGS.VIF before returning to
+    // guest execution.
+    guestStackContext->eflags.fields.vif = toEFlags.fields.if_;
+    // guestStackContext->eflags.fields.if_ asserted below.
+    guestStackContext->eflags.fields.vip = 0; // Set in "fault.c".
+    }
+  else if ( fromCPL < toCS.fields.rpl ) {
+    // IRET ring0 --> ring3.  We need to transition out of PVI mode.
+    // STI/CLI will work as expected in non-PVI mode, causing exceptions
+    // as they should, rather than operating on EFLAGS.VIF.
 
-error:
-  plex86TearDown(); exit(1);
+    // EFLAGS.{VIF,VIP} values should not be set - we will not use PVI mode.
+    // The value of EFLAGS.IF from the stack image is honored due to an
+    // origin of CPL==0.  Thus the *new* guest EFLAGS.IF value should be 1,
+    // otherwise guest interrupts will never be accepted!
+    if ( toEFlags.raw & (FlgMaskVIF | FlgMaskVIP) )
+      monprint(vm, "IRET: r0 -> r3, stack eflags.{vif|vip}=1 (0x%x).\n",
+               toEFlags.raw);
+    if ( toEFlags.fields.if_ == 0 )
+      monpanic(vm, "IRET: r0 -> r3, stack eflags.if=0 (0x%x).\n",
+               toEFlags.raw);
+    guestStackContext->eflags.fields.vif = 0;
+    guestStackContext->eflags.fields.vip = 0;
+    // guestStackContext->eflags.fields.if_ asserted below.
 
-// don't forget setting CPL
+    // Clear CR4.PVI bit; switch out of PVI mode for executing guest.
+    // (1st sanity check that monitor originally had CR4.PVI asserted)
+    if ( ! (nexus->mon_cr4 & (1<<1)) )
+      monpanic(vm, "IRET: r0 -> r3; mon CR4.PVI=0?\n");
+    nexus->mon_cr4 &= ~(1<<1); // Clear CR4.PVI
+    loadCR4(nexus->mon_cr4);   // Reload actual monitor CR4 value.
+    }
+  else {
+    // IRET ring3 --> ring3.  Remain in non-PVI mode.
+    // STI/CLI will work as expected in non-PVI mode, causing exceptions
+    // as they should.
+
+    // EFLAGS.{VIF,VIP} values should not be set - we will not use PVI mode.
+    // The value of EFLAGS.IF from the stack image is ignored due to an
+    // origin of CPL==3.  Thus the original EFLAGS.IF value should be 1,
+    // otherwise guest interrupts will never be accepted!
+    if ( toEFlags.raw & (FlgMaskVIF | FlgMaskVIP) )
+      monpanic(vm, "IRET: r3 -> r3, stack eflags.{vif|vip}=1 (0x%x).\n",
+               toEFlags.raw);
+    guestStackContext->eflags.fields.vif = 0;
+    guestStackContext->eflags.fields.vip = 0;
+    // guestStackContext->eflags.fields.if_ asserted below.
+
+    // Sanity check that monitor has CR4.PVI cleared.
+    if ( nexus->mon_cr4 & (1<<1) )
+      monpanic(vm, "IRET: r3 -> r3; mon CR4.PVI=1?\n");
+    }
+
+  // As a safeguard, always set EFLAGS.IF=1, because the monitor will
+  // perform a real IRET back to the guest code, and a value of 0
+  // would prevent the monitor from ever returning to the host!
+  guestStackContext->eflags.fields.if_ = 1;
+
+  // Now modify the EFLAGS bits which are always passed through from
+  // the requested guest value, and retain the bits which are not.
+  // The resulting value is the one used, when the monitor IRET's
+  // back to guest execution.
+  guestStackContext->eflags.raw =
+      (guestStackContext->eflags.raw & ~changeMask) |
+      (toEFlags.raw & changeMask);
 }
-#endif
 
 
   unsigned

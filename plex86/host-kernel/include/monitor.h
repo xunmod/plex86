@@ -665,6 +665,7 @@ void close_guest_phy_page(vm_t *, Bit32u ppage_index);
 unsigned mapGuestLinAddr(vm_t *, Bit32u guest_laddr,
                          Bit32u *guest_ppage_index, unsigned us,
                          unsigned rw, Bit32u attr, Bit32u *error);
+void invalidateGuestLinAddr(vm_t *vm, Bit32u guestLAddr);
 unsigned addPageAttributes(vm_t *, Bit32u ppi, Bit32u attr);
 phyPageInfo_t *getPageUsage(vm_t *, Bit32u ppage_index);
 void virtualize_lconstruct(vm_t *, Bit32u l0, Bit32u l1, unsigned perm);
