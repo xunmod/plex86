@@ -83,11 +83,15 @@ struct net_device snull_devs[2] = {
 /* One HAL Rx area for each device. */
 static halNetGuestRxArea_t *halNetGuestRxArea[2] = { 0, 0 } ;
 
-MODULE_AUTHOR("Kevin P. Lawton");
-
 /* This is a load-time options */
 static int eth = 0; /* Call yourself "ethX". Default is "sn0"/"sn1" */
+
+MODULE_AUTHOR("Kevin P. Lawton");
+MODULE_DESCRIPTION("Plex86 guest network driver (HAL)");
+MODULE_LICENSE("GPL");
+
 MODULE_PARM(eth, "i");
+MODULE_PARM_DESC(eth, "Fixme:");
 
 #if 0
 /*

@@ -20,6 +20,8 @@
 
 
 MODULE_AUTHOR("Kevin P. Lawton");
+MODULE_DESCRIPTION("Plex86 guest console driver (HAL)");
+MODULE_LICENSE("GPL");
 
 
   static unsigned
