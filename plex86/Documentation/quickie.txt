@@ -197,6 +197,15 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
   root> /sbin/ifconfig tun0 hw ether 00:FF:84:8E:94:31 host-vmnet
   root> arp -f /etc/ethers
 
+  Note: A Mandrake Cooker user reported needing to mark the interface
+  Note: down, then up after the hardware address is configured.  If you are
+  Note: getting "device busy" errors, perhaps try this variation instead:
+  Note:
+  Note:   root> /sbin/ifconfig tun0 down
+  Note:   root> /sbin/ifconfig tun0 hw ether 00:FF:84:8E:94:31 host-vmnet
+  Note:   root> /sbin/ifconfig tun0 up
+  Note:   root> arp -f /etc/ethers
+
   Now you can type return in the original shell, and plex86 will continue.
 
 12) If all goes well, you should see an X application (xclipboard) pop
