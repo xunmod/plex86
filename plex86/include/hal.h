@@ -59,7 +59,6 @@ typedef struct {
     unsigned cylinders; // Number of cylinders.
     unsigned heads;     // Number o heads.
     unsigned spt;       // Sectors per track.
-    unsigned start;     // Fixme: ???
     unsigned numSectors; // Total number of sectors on disk.
     } geom;
   } halDiskInfo_t; // Fixme: should this be only in the guest driver?

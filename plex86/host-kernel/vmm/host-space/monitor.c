@@ -297,7 +297,7 @@ hostInitMonitor(vm_t *vm)
   /* Map virtualized guest page tables into monitor. */
   vm->guest.addr.page_tbl = (page_t *) (laddr - base);
   hostMapMonPages(vm, vm->pages.page_tbl, MON_PAGE_TABLES,
-                  &laddr, pageTable, US0, RW1, "Guest Page Tables");
+                  &laddr, pageTable, US0, RW1, "Monitor/Guest Page Tables");
 
 #if ANAL_CHECKS
   hostMapBlankPage(vm, &laddr, pageTable);

@@ -163,7 +163,6 @@ typedef struct {
 #define MON_IDT_STUBS_PAGES BytesToPages(MON_IDT_STUBS_SIZE)
 #define MON_TSS_PAGES       BytesToPages(MON_TSS_SIZE)
 
-// fixme: #define MAX_MON_GUEST_PAGES    (PLEX86_MAX_PHY_MEGS * 256)
 // fixme: MON_PAGE_TABLES is kind of random.
 #define MON_PAGE_TABLES    (10*((PLEX86_MAX_PHY_MEGS+3) >> 2))
 

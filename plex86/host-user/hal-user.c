@@ -347,7 +347,6 @@ char pathName[HalDiskMaxDisks][64];
           halDiskInfo[unit].geom.cylinders = (sectors & ~0x3f) >> 6;
           halDiskInfo[unit].geom.heads = 4;
           halDiskInfo[unit].geom.spt = 16;
-          halDiskInfo[unit].geom.start = 4;
           halDiskInfo[unit].geom.numSectors = sectors;
 sprintf(pathName[unit], "%s%u", "/tmp/hald", unit);
 halDiskFileNo[unit] = open(pathName[unit], O_RDWR, 0);
