@@ -259,7 +259,8 @@ emulateSysInstr(vm_t *vm)
   guest_cpu_t *guestCpu = vm->guest.addr.guest_cpu;
   guestStackContext_t *guestStackContext = vm->guest.addr.guestStackContext;
 
-  getObjectLAddr(vm, opcode, EIP, 16);
+  // Fixme: should we make opcode bigger to guard against overruns?
+  getObjectLAddr(vm, opcode, EIP, 15);
 
 decodeOpcode:
 
@@ -765,7 +766,8 @@ emulateUserInstr(vm_t *vm)
   // unsigned opsize = 1; // 32-bit opsize by default.
 
   // Fixme: We could optimize by fetching just a word of memory for Int_Ib.
-  getObjectLAddr(vm, opcode, EIP, 16);
+  // Fixme: should we make opcode bigger to guard against overruns?
+  getObjectLAddr(vm, opcode, EIP, 15);
 
 // decodeOpcode:
 
@@ -1021,9 +1023,11 @@ getObjectLAddr(vm_t *vm, Bit8u *obj, Bit32u lAddr0, unsigned len)
   Bit8u    *phyPagePtr;
   unsigned  pOff;
 
+Bit8u *saveObj = obj; // Fixme:
+
   pAddr0 = translateLinToPhy(vm, lAddr0);
   if (pAddr0 == LinAddrNotAvailable) {
-    monpanic(vm, "getObjectLAddr: lin-->phy translation failed (0x%x).\n",
+    monpanic(vm, "getObjectLAddr:(1) lin-->phy translation failed (0x%x).\n",
              lAddr0);
     }
   pOff = pAddr0 & 0xfff;
@@ -1054,7 +1058,11 @@ getObjectLAddr(vm_t *vm, Bit8u *obj, Bit32u lAddr0, unsigned len)
     page1Len = len - page0Len;
     pAddr1   = translateLinToPhy(vm, lAddr0 + page0Len);
     if (pAddr1 == LinAddrNotAvailable) {
-      monpanic(vm, "getObjectLAddr: lin-->phy translation failed (0x%x).\n",
+      unsigned z;
+      for (z=0; z<page0Len; z++) {
+        monprint(vm, "  0x%x\n", (unsigned) saveObj[z]);
+        }
+      monpanic(vm, "getObjectLAddr:(2) lin-->phy translation failed (0x%x).\n",
               lAddr0 + page0Len);
       }
     if ( pAddr0 > (vm->pages.guest_n_bytes-page0Len) ) {

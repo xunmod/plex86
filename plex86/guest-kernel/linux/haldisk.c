@@ -91,7 +91,6 @@ int haldisk_major; /* must be declared before including blk.h */
 typedef struct Haldisk_Dev {
   int size;
   int usage;
-  struct timer_list timer;
   spinlock_t lock;
   u8 *data;
   } Haldisk_Dev;
@@ -145,8 +144,6 @@ static int haldisk_release(struct inode *inode, struct file *filp);
 static int haldisk_ioctl(struct inode *inode, struct file *filp,
                          unsigned int cmd, unsigned long arg);
 static int haldisk_revalidate(kdev_t i_rdev);
-static int haldisk_check_change(kdev_t i_rdev);
-static void haldisk_expires(unsigned long data);
 static Haldisk_Dev *haldisk_locate_device(const struct request *req);
 static int haldisk_transfer(Haldisk_Dev *device, const struct request *req);
 static void haldisk_request(request_queue_t *q);
@@ -163,7 +160,6 @@ static struct block_device_operations haldisk_bdops = {
   release:    haldisk_release,
   ioctl:      haldisk_ioctl,
   revalidate: haldisk_revalidate,
-  check_media_change: haldisk_check_change,
   };
 
 
@@ -199,9 +195,6 @@ int haldisk_open (struct inode *inode, struct file *filp)
     if (num >= haldisk_devs) return -ENODEV;
     dev = haldisk_devices + num;
 
-    /* kill the timer associated to the device: it might be active */
-    del_timer(&dev->timer);
-
     spin_lock(&dev->lock);
 
     /*
@@ -235,13 +228,9 @@ int haldisk_release (struct inode *inode, struct file *filp)
     dev->usage--;
 
     /*
-     * If the device is closed for the last time, start a timer
-     * to release RAM in half a minute. The function and argument
-     * for the timer have been setup in haldisk_init()
+     * If the device is closed for the last time.
      */
     if (!dev->usage) {
-        dev->timer.expires = jiffies + 60 * HZ;
-        add_timer(&dev->timer);
         /* but flush it right now */
         fsync_dev(inode->i_rdev);
         invalidate_buffers(inode->i_rdev);
@@ -252,28 +241,6 @@ int haldisk_release (struct inode *inode, struct file *filp)
     return 0;
 }
 
-
-
-/*
- * The timer function. As argument it receives the device
- */
-void haldisk_expires(unsigned long data)
-{
-    Haldisk_Dev *dev = (Haldisk_Dev *)data;
-
-    spin_lock(&dev->lock);
-    if (dev->usage || !dev->data) {
-        spin_unlock(&dev->lock);
-        printk(KERN_WARNING "haldisk: timer mismatch for device %i\n",
-               dev - haldisk_devices);
-        return;
-    }
-    PDEBUG("freeing device %i\n",dev - haldisk_devices);
-    vfree(dev->data);
-    dev->data=0;
-    spin_unlock(&dev->lock);
-    return;
-}    
 
 /*
  * The ioctl() implementation
@@ -344,29 +311,6 @@ int haldisk_ioctl(struct inode *inode, struct file *filp,
 
     return -ENOTTY; /* unknown command */
 }
-
-/*
- * Support for removable devices
- */
-
-int haldisk_check_change(kdev_t i_rdev)
-{
-    int minor = DEVICE_NR(i_rdev);
-    Haldisk_Dev *dev = haldisk_devices + minor;
-
-    if (minor >= haldisk_devs) /* paranoid */
-        return 0;
-
-    PDEBUG("check_change for dev %i\n",minor);
-
-    if (dev->data)
-        return 0; /* still valid */
-    return 1; /* expired */
-}
-
-
-
-
 
 /*
  * Note no locks taken out here.  In a worst case scenario, we could drop
@@ -581,9 +525,6 @@ int haldisk_init(void)
     for (i=0; i < haldisk_devs; i++) {
         /* data and usage remain zeroed */
         haldisk_devices[i].size = blksize * haldisk_size;
-        init_timer(&(haldisk_devices[i].timer));
-        haldisk_devices[i].timer.data = (unsigned long)(haldisk_devices+i);
-        haldisk_devices[i].timer.function = haldisk_expires;
         spin_lock_init(&haldisk_devices[i].lock);
     }
 
@@ -685,7 +626,6 @@ void haldisk_cleanup(void)
  */
     for (i = 0; i < haldisk_devs; i++) {
         Haldisk_Dev *dev = haldisk_devices + i;
-        del_timer(&dev->timer);
         spin_lock(&dev->lock);
         dev->usage++;
         spin_unlock(&dev->lock);
