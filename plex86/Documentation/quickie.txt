@@ -8,6 +8,11 @@ the files to.  Log into at least 2 shells, one as a user and one as root.
 
 Requirements: Linux host 2.4.20+, Linux guest 2.4+.
 
+0) You need to run your host Linux with 4Meg pages off.  If your kernel
+   uses them, you can reboot with the following flag to turn use of them off.
+
+   "mem=nopentium"
+
 1) You need a guest Linux kernel image:
 
   EASY: Download one from the plex86 website.  Get a 2.4.20 image from
