@@ -46,19 +46,19 @@ AC_ARG_WITH(host-linux-source,
   )
 AC_SUBST(HOST_LINUX_SRC)
 
-dnl AC_ARG_WITH(host-netbsd-source,
-dnl   [  --with-host-netbsd-source=dir     NetBSD kernel source dir],
-dnl   [ HOST_NETBSD_SRC="$withval" ],
-dnl   [ HOST_NETBSD_SRC="/sys" ]
-dnl   )
-dnl AC_SUBST(HOST_NETBSD_SRC)
+AC_ARG_WITH(host-netbsd-source,
+  [  --with-host-netbsd-source=dir     NetBSD kernel source dir],
+  [ HOST_NETBSD_SRC="$withval" ],
+  [ HOST_NETBSD_SRC="/sys" ]
+  )
+AC_SUBST(HOST_NETBSD_SRC)
 
-dnl AC_ARG_WITH(host-freebsd-source,
-dnl   [  --with-host-freebsd-source=dir    FreeBSD kernel source dir],
-dnl   [ HOST_FREEBSD_SRC="$withval" ],
-dnl   [ HOST_FREEBSD_SRC="/sys" ]
-dnl   )
-dnl AC_SUBST(HOST_FREEBSD_SRC)
+AC_ARG_WITH(host-freebsd-source,
+  [  --with-host-freebsd-source=dir    FreeBSD kernel source dir],
+  [ HOST_FREEBSD_SRC="$withval" ],
+  [ HOST_FREEBSD_SRC="/sys" ]
+  )
+AC_SUBST(HOST_FREEBSD_SRC)
 
 
 dnl ================
@@ -75,6 +75,10 @@ AC_SUBST(GUEST_LINUX_SRC)
 
 if test "$with_host_linux_source" != ""; then
   HOST_OS=linux
+elif test "$with_host_netbsd_source" != ""; then
+  HOST_OS=netbsd
+elif test "$with_host_freebsd_source" != ""; then
+  HOST_OS=freebsd
 elif test "$with_host_stubs" != ""; then
   HOST_OS=null
 else

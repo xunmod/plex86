@@ -11,8 +11,8 @@
 #ifndef __PAGING_H__
 #define __PAGING_H__
 
-#define PG_D 0x00000040
-#define PG_A 0x00000020
+#define PgMskD 0x00000040
+#define PgMskA 0x00000020
 
 /* Page Directory/Table format */
 typedef union {

@@ -829,6 +829,8 @@ Optional Packages:
   --with-x                use the X Window System
   --with-host-stubs                 No real host
   --with-host-linux-source=dir      Linux kernel source dir
+  --with-host-netbsd-source=dir     NetBSD kernel source dir
+  --with-host-freebsd-source=dir    FreeBSD kernel source dir
   --with-guest-linux-source=dir     Linux kernel source dir
 
 Some influential environment variables:
@@ -5621,6 +5623,26 @@ fi;
 
 
 
+# Check whether --with-host-netbsd-source or --without-host-netbsd-source was given.
+if test "${with_host_netbsd_source+set}" = set; then
+  withval="$with_host_netbsd_source"
+   HOST_NETBSD_SRC="$withval"
+else
+   HOST_NETBSD_SRC="/sys"
+
+fi;
+
+
+
+# Check whether --with-host-freebsd-source or --without-host-freebsd-source was given.
+if test "${with_host_freebsd_source+set}" = set; then
+  withval="$with_host_freebsd_source"
+   HOST_FREEBSD_SRC="$withval"
+else
+   HOST_FREEBSD_SRC="/sys"
+
+fi;
+
 
 
 
@@ -5638,6 +5660,10 @@ fi;
 
 if test "$with_host_linux_source" != ""; then
   HOST_OS=linux
+elif test "$with_host_netbsd_source" != ""; then
+  HOST_OS=netbsd
+elif test "$with_host_freebsd_source" != ""; then
+  HOST_OS=freebsd
 elif test "$with_host_stubs" != ""; then
   HOST_OS=null
 else
@@ -6248,6 +6274,8 @@ s,@X_PRE_LIBS@,$X_PRE_LIBS,;t t
 s,@X_LIBS@,$X_LIBS,;t t
 s,@X_EXTRA_LIBS@,$X_EXTRA_LIBS,;t t
 s,@HOST_LINUX_SRC@,$HOST_LINUX_SRC,;t t
+s,@HOST_NETBSD_SRC@,$HOST_NETBSD_SRC,;t t
+s,@HOST_FREEBSD_SRC@,$HOST_FREEBSD_SRC,;t t
 s,@GUEST_LINUX_SRC@,$GUEST_LINUX_SRC,;t t
 s,@LD@,$LD,;t t
 s,@HOST_OS@,$HOST_OS,;t t
