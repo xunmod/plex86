@@ -17,10 +17,11 @@ linux=/tmp/vmlinux-2.4.21-2-plex86.img
   # An initial ramdisk image with ext2 filesystem; must be 1k multiple.
 initrd=/tmp/initrd-2.4.21-xapps.img
 #initrd=~/linux/initrd.2M.nfs
+#initrd=/tmp/initrd-2.4.21-nfs
 
   # Size of memory of the VM, in megabytes (2^10).
-#megs=32
-megs=64
+megs=32
+#megs=64
 
   # Bogomips rating from your host; type "dmesg | grep -i bogomips"
 bogomips=989
@@ -31,7 +32,7 @@ bogomips=989
 tun_script=
 
   # If you're using an NFS root, define it here.
-#nfs_root=host-vmnet:/export/rh73
+#nfs_root=host-vmnet:/export/nfsroot
 nfs_root=
 
 dump_vga=
