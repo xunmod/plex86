@@ -1,0 +1,14 @@
+#!/bin/bash
+
+CC=gcc
+LDFLAGS=
+
+CFLAGS="-Wall -Wstrict-prototypes -Wno-trigraphs -O2 -fno-strict-aliasing -fno-common -pipe -mpreferred-stack-boundary=2 -march=i586"
+
+export HOST_KERNEL_CFLAGS="${CFLAGS}"
+export HOST_USER_CFLAGS="${CFLAGS}"
+
+export GUEST_KERNEL_CFLAGS="${CFLAGS}"
+export GUEST_USER_CFLAGS="${CFLAGS}"
+
+./configure -with-host-stubs
