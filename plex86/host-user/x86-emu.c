@@ -66,7 +66,6 @@ static phyAddr_t translateLinToPhy(Bit32u lAddr);
 static unsigned  decodeModRM(Bit8u *opcodePtr, modRM_t *modRMPtr);
 static Bit32u    getGuestDWord(Bit32u lAddr);
 static Bit16u    getGuestWord(Bit32u lAddr);
-static void      writeGuestDWord(Bit32u lAddr, Bit32u val);
 static descriptor_t *fetchGuestDescriptor(selector_t);
 
 static void      doIRET(void);
@@ -265,45 +264,6 @@ decodeOpcode:
       unsigned b1;
       b1 = opcode[iLen++];
       switch (b1) {
-        case 0x01: // Group7
-          {
-          iLen += decodeModRM(&opcode[iLen], &modRM);
-// fprintf(stderr, "emulateSysIntr: G7: nnn=%u\n", modRM.nnn);
-          switch (modRM.nnn) {
-            case 2: // LGDT_Ms
-              {
-              Bit32u   base32;
-              Bit16u   limit16;
-
-              if (modRM.mod==3) { // Must be a memory reference.
-                fprintf(stderr, "LGDT_Ms: mod=3.\n");
-                return 0;
-                }
-              limit16 = getGuestWord(modRM.addr);
-              base32  = getGuestDWord(modRM.addr+2);
-              plex86GuestCPU->gdtr.base  = base32;
-              plex86GuestCPU->gdtr.limit = limit16;
-fprintf(stderr, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
-              goto advanceInstruction;
-              }
-            case 7: // INVLPG
-              {
-              if (modRM.mod==3) { // Must be a memory reference.
-                fprintf(stderr, "INVLPG: mod=3.\n");
-                return 0;
-                }
-              // Fixme: must act on this when this code goes in the VMM.
-              // For now, who cares since the page tables are rebuilt anyways.
-              goto advanceInstruction;
-              }
-            }
-          return 0;
-          }
-        case 0x06: // CLTS
-          {
-          plex86GuestCPU->cr0.fields.ts = 0;
-          goto advanceInstruction;
-          }
 
         case 0x22: // MOV_CdRd
           {
@@ -602,33 +562,6 @@ error:
   plex86TearDown(); exit(1);
 }
 
-  void
-writeGuestDWord(Bit32u lAddr, Bit32u val)
-{
-  phyAddr_t pAddr;
-
-// Fixme: Assumes write priv in page tables.
-  pAddr = translateLinToPhy(lAddr);
-
-  if (pAddr == -1) {
-    fprintf(stderr, "writeGuestDWord: could not translate address.\n");
-    goto error;
-    }
-  if ( pAddr >= (plex86MemSize-3) ) {
-    fprintf(stderr, "writeGuestDWord: phy address OOB.\n");
-    goto error;
-    }
-  if ( (pAddr & 0xfff) >= 0xffd ) {
-    fprintf(stderr, "writeGuestDWord: crosses page boundary.\n");
-    goto error;
-    }
-  * ((Bit32u*) &plex86MemPtr[pAddr]) = val;
-  return;
-
-error:
-  plex86TearDown(); exit(1);
-}
-
   descriptor_t *
 fetchGuestDescriptor(selector_t sel)
 {
@@ -676,175 +609,6 @@ fetchGuestDescriptor(selector_t sel)
 error:
   plex86TearDown(); exit(1);
 }
-
-
-  void      
-doInterrupt(unsigned vector, unsigned intFlags, Bit32u errorCode)
-{
-  phyAddr_t  gatePAddr;
-  gate_t    *gatePtr;
-  selector_t csSel;
-  Bit32u     offset32;
-  descriptor_t *csDescPtr;
-  Bit32u esp;
-  Bit32u oldEFlags;
-
-  if ( plex86GuestCPU->eflags & FlgMaskVIF ) {
-    fprintf(stderr, "doGI: VIF=1.\n");
-    goto error;
-    }
-
-  // fprintf(stderr, "doInterrupt: vector=%u.\n", vector);
-  if ( ((vector<<3)+7) > plex86GuestCPU->idtr.limit ) {
-    fprintf(stderr, "doInterrupt: vector(%u) OOB.\n", vector);
-    goto error;
-    }
-
-  // If IDTR is 8-byte aligned, we don't have to worry about the
-  // descriptor crossing page boundaries.
-  if ( plex86GuestCPU->idtr.base & 7 ) {
-    fprintf(stderr, "doInterrupt: idtr.base not 8-byte aligned.\n");
-    goto error;
-    }
-
-  gatePAddr = translateLinToPhy(plex86GuestCPU->idtr.base + (vector<<3));
-  if ( gatePAddr == LinAddrNotAvailable ) {
-    fprintf(stderr, "doInterrupt: idtr.base not 8-byte aligned.\n");
-    goto error;
-    }
-  gatePtr = (gate_t *) & plex86MemPtr[gatePAddr];
-  if ( gatePtr->p==0 ) {
-    fprintf(stderr, "doInterrupt: p=%u\n", gatePtr->p);
-    goto error;
-    }
-  if ( (gatePtr->type!=14) && (gatePtr->type!=15) ) { // 32-bit int/trap gate.
-    fprintf(stderr, "doInterrupt: desc type(%u)!=14.\n", gatePtr->type);
-    goto error;
-    }
-  if ( (intFlags & IntFlagSoftInt) && (gatePtr->dpl < CPL) ) {
-    fprintf(stderr, "doInterrupt: intIb, dpl(%u)<CPL(%u).\n", gatePtr->dpl, CPL);
-    goto error;
-    }
-
-  csSel = gatePtr->selector;
-  offset32 = (gatePtr->offset_high<<16) | gatePtr->offset_low;
-
-  if ( (csSel.raw & 0xfffc) == 0 ) {
-    fprintf(stderr, "doInterrupt: gate selector NULL.\n");
-    goto error;
-    }
-  csDescPtr = fetchGuestDescriptor(csSel);
-  if ( (csDescPtr==NULL) ||
-       (csDescPtr->type!=0x1a) ||
-       (csDescPtr->dpl!=0) ||
-       (csDescPtr->p==0) ) {
-    fprintf(stderr, "doInterrupt: bad CS descriptor, type=0x%x, "
-                    "dpl=%u, p=%u.\n",
-            csDescPtr->type, csDescPtr->dpl, csDescPtr->p);
-    goto error;
-    }
-
-  // Copy IF to VIF
-  oldEFlags = plex86GuestCPU->eflags;
-  if ( oldEFlags & FlgMaskIF )
-    oldEFlags |= FlgMaskVIF;
-
-  if ( csDescPtr->dpl < CPL ) { // Interrupt to inner (system) ring.
-    Bit32u oldESP, oldSS, tssESP, trLimit, trBase, tssStackInfoOffset;
-    selector_t ssSel;
-    descriptor_t *ssDescPtr;
-
-    // Get inner SS/ESP values from TSS.
-    if ( plex86GuestCPU->tr.des.type != 11 ) {
-      fprintf(stderr, "doInterrupt: TR.type(%u)!=11.\n",
-              plex86GuestCPU->tr.des.type);
-      goto error;
-      }
-    trLimit = ((plex86GuestCPU->tr.des.limit_high<<16) |
-               (plex86GuestCPU->tr.des.limit_low<<0));
-    if ( plex86GuestCPU->tr.des.g )
-      trLimit = (trLimit<<12) | 0xfff;
-    trBase  = (plex86GuestCPU->tr.des.base_high<<24) |
-              (plex86GuestCPU->tr.des.base_med<<16) |
-              (plex86GuestCPU->tr.des.base_low<<0);
-    tssStackInfoOffset = 8*csDescPtr->dpl + 4;
-    if ( (tssStackInfoOffset+7) > trLimit ) {
-      fprintf(stderr, "doInterrupt: bad TR.limit.\n");
-      goto error;
-      }
-    tssESP    = getGuestDWord(trBase + tssStackInfoOffset);
-    ssSel.raw = getGuestWord(trBase + tssStackInfoOffset + 4);
-
-    if ( (ssSel.raw & 0xfffc) == 0 ) {
-      fprintf(stderr, "doInterrupt: bad SS value 0x%x.\n", ssSel.raw);
-      goto error;
-      }
-    if ( ssSel.fields.rpl != csDescPtr->dpl ) {
-      fprintf(stderr, "doInterrupt: ss.rpl != cs.rpl.\n");
-      goto error;
-      }
-    ssDescPtr = fetchGuestDescriptor(ssSel);
-    if ( (ssDescPtr==NULL) ||
-         (ssDescPtr->type!=0x12) ||
-         (ssDescPtr->dpl!=0) ||
-         (ssDescPtr->p==0) ) {
-      fprintf(stderr, "doInterrupt: bad SS descriptor, type=0x%x, "
-                      "dpl=%u, p=%u.\n",
-              ssDescPtr->type, ssDescPtr->dpl, ssDescPtr->p);
-      goto error;
-      }
-
-    oldESP = plex86GuestCPU->genReg[GenRegESP];
-    oldSS  = plex86GuestCPU->sreg[SRegSS].sel.raw;
-
-    // Load SS:ESP
-    plex86GuestCPU->sreg[SRegSS].sel = ssSel;
-    plex86GuestCPU->sreg[SRegSS].des = * ssDescPtr;
-    plex86GuestCPU->sreg[SRegSS].valid = 1;
-    plex86GuestCPU->genReg[GenRegESP] = tssESP;
-
-    plex86GuestCPU->genReg[GenRegESP] -= 20;
-    esp = plex86GuestCPU->genReg[GenRegESP];
-    // Push SS
-    // Push ESP
-    writeGuestDWord(esp+16, oldSS);
-    writeGuestDWord(esp+12, oldESP);
-    }
-  else {
-    plex86GuestCPU->genReg[GenRegESP] -= 12;
-    esp = plex86GuestCPU->genReg[GenRegESP];
-    }
-
-  // Push eflags
-  // Push CS
-  // Push EIP
-  writeGuestDWord(esp+8,  oldEFlags);
-  writeGuestDWord(esp+4,  plex86GuestCPU->sreg[SRegCS].sel.raw);
-  writeGuestDWord(esp+0,  plex86GuestCPU->eip);
-
-  // If this fault has an associated error code, push that on the stack also.
-  if ( intFlags & IntFlagPushError ) {
-    plex86GuestCPU->genReg[GenRegESP] -= 4;
-    writeGuestDWord(plex86GuestCPU->genReg[GenRegESP], errorCode);
-    }
-
-  // Load CS:EIP
-  plex86GuestCPU->sreg[SRegCS].sel = csSel;
-  plex86GuestCPU->sreg[SRegCS].des = * csDescPtr;
-  plex86GuestCPU->sreg[SRegCS].valid = 1;
-  plex86GuestCPU->eip = offset32;
-
-  // Clear EFLAGS.{VM,RF,NT,TF}.
-  plex86GuestCPU->eflags &= ~(FlgMaskVM | FlgMaskRF | FlgMaskNT | FlgMaskTF);
-  // If interupt-gate, clear IF.
-  if ( gatePtr->type==14 )
-    plex86GuestCPU->eflags &= ~FlgMaskIF;
-  return;
-
-error:
-  plex86TearDown(); exit(1);
-}
-
 
   void
 doIRET(void)

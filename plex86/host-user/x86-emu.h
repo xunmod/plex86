@@ -28,8 +28,8 @@ typedef struct {
 // ===================
 
 extern unsigned  doGuestFault(unsigned fault, unsigned errorCode);
-extern void      doInterrupt(unsigned vector, unsigned intFlags,
-                             Bit32u errorCode);
+//extern void      doInterrupt(unsigned vector, unsigned intFlags,
+//                             Bit32u errorCode);
 
 
 // =========

@@ -338,22 +338,18 @@ decodeOpcode:
           switch (modRM.nnn) {
             case 2: // LGDT_Ms
               {
-return 0; // defer to user space implementation for now.
-#if 0
               Bit32u   base32;
               Bit16u   limit16;
 
               if (modRM.mod==3) { // Must be a memory reference.
-                monprint(vm, "LGDT_Ms: mod=3.\n");
-                return 0;
+                monpanic(vm, "LGDT_Ms: mod=3.\n");
                 }
-              limit16 = getGuestWord(modRM.addr);
-              base32  = getGuestDWord(modRM.addr+2);
-              plex86GuestCPU->gdtr.base  = base32;
-              plex86GuestCPU->gdtr.limit = limit16;
-monprint(vm, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
+              limit16 = getGuestWord(vm, modRM.addr);
+              base32  = getGuestDWord(vm, modRM.addr+2);
+              guestCpu->gdtr.base  = base32;
+              guestCpu->gdtr.limit = limit16;
+monprint(vm, "GDTR.limit = 0x%x.\n", limit16);
               goto advanceInstruction;
-#endif
               }
 
             case 3: // LIDT_Ms
@@ -374,34 +370,23 @@ monprint(vm, "GDTR.limit = 0x%x\n", plex86GuestCPU->gdtr.limit);
 
             case 7: // INVLPG
               {
-return 0; // defer to user space implementation for now.
-#if 0
               if (modRM.mod==3) { // Must be a memory reference.
                 monprint(vm, "INVLPG: mod=3.\n");
                 return 0;
                 }
-              // Fixme: must act on this when this code goes in the VMM.
-              // For now, who cares since the page tables are rebuilt anyways.
+              invlpg_mon_offset( Guest2Monitor(vm, modRM.addr) );
               goto advanceInstruction;
-#endif
               }
-
-            case 0: // SGDT_Ms
-            case 1: // SIDT_Ms
-            case 4:
-            case 5:
-            case 6:
             }
           return 0;
           }
 
         case 0x06: // CLTS
           {
-return 0; // defer to user space implementation for now.
-#if 0
+          // Fixme: when we support FPU ops, we need to sync the monitor
+          // Fixme: cr0 value (nexus->mon_cr0) and reload it here.
           guestCpu->cr0.fields.ts = 0;
           goto advanceInstruction;
-#endif
           }
 
         case 0x20: // MOV_RdCd
