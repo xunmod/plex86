@@ -153,6 +153,8 @@ static int           plex86FD = -1;
 
        Bit64u   tsc = 0;
 
+static unsigned vgaDump = 0;
+
 
 static unsigned faultCount[32];
 #define CyclesOverhead 980  // Fixme: apply this bias to the cycle counts.
@@ -234,6 +236,10 @@ fprintf(stderr, "initrdImageLoadAddr is 0x%x\n", initrdImageLoadAddr);
       /* Make damn sure string ends. */
       kernelCommandLine[KernelCommandLineMax-1] = 0;
       argi += 2;
+      }
+    else if ( !strcmp(argv[argi], "-dump-vga") ) {
+      argi += 1;
+      vgaDump = 1;
       }
     else {
       goto errorArgUnrecognized;
@@ -509,7 +515,8 @@ plex86TearDown(void)
       }
     plex86FD = -1; // File descriptor is now closed.
 
-    doVGADump();
+    if ( vgaDump )
+      doVGADump();
     fprintf(stderr, "minCyclesExecuted = %llu.\n", minCyclesExecuted);
     }
 

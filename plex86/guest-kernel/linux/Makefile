@@ -17,7 +17,7 @@
 #  License along with this library; if not, write to the Free Software
 #  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
-.PHONY: clean dist-clean
+.PHONY: drivers clean dist-clean
 
 include ../../Rules.make
 
@@ -46,8 +46,14 @@ OBJS := halnet.o
 .c.o:
 	$(GUEST_KERNEL_CC) -c $(GUEST_KERNEL_CFLAGS) $(INC_DIRS) $<
 
-$(MODULE_NAME): $(OBJS)
-	/bin/rm -f $(MODULE_NAME)
+drivers: halnet halconsole
+
+halnet: $(OBJS)
+	/bin/rm -f $@
+	$(LD) -r -o $@ $^
+
+halconsole: halconsole.o
+	/bin/rm -f $@
 	$(LD) -r -o $@ $^
 
 clean:

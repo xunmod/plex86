@@ -44,6 +44,8 @@
 #include "hal-user.h"
 
 
+// #define TUNTAP_SPEW 1
+
 #define HalNet0Irq 3
 
 
@@ -71,6 +73,22 @@ struct {
   halNetGuestRxArea_t *guestRxArea;
   } halNetDev[HalNetMaxDevices];
 
+struct {
+  unsigned  registered;
+  phyAddr_t guestRwAreaPAddr;
+  unsigned  guestRwAreaLen;
+  halConGuestRwArea_t *guestRwArea;
+  } halConDev[HalConMaxDevices];
+
+// Handled up to the following # of chars per line.  One extra since
+// Linux is spewing 80 chars, then a newline in a separate request.  If
+// we print when we get to 80, we'll end up printing an extra newline.
+#define LineLen 81
+
+/* Allow for preceding "> " and following newline + NULL char. */
+static unsigned char halConLine[LineLen+2];
+static unsigned      halConLineI = 0;
+
   unsigned
 initHal(void)
 {
@@ -83,11 +101,11 @@ halCall(void)
 {
   unsigned callNo;
 
-  fprintf(stderr, "halCall: call=%u, device=%u, packetAddr=0x%x, len=%u.\n",
-          plex86GuestCPU->genReg[GenRegEAX],
-          plex86GuestCPU->genReg[GenRegEBX],
-          plex86GuestCPU->genReg[GenRegECX],
-          plex86GuestCPU->genReg[GenRegEDX]);
+  // fprintf(stderr, "halCall: call=%u, device=%u, packetAddr=0x%x, len=%u.\n",
+  //         plex86GuestCPU->genReg[GenRegEAX],
+  //         plex86GuestCPU->genReg[GenRegEBX],
+  //         plex86GuestCPU->genReg[GenRegECX],
+  //         plex86GuestCPU->genReg[GenRegEDX]);
 
   callNo = plex86GuestCPU->genReg[GenRegEAX];
 
@@ -193,6 +211,7 @@ halCall(void)
 
       // Write Tx packet to the TUN/TAP interface.
       txBuffer = &plex86MemPtr[packetPAddr];
+#ifdef TUNTAP_SPEW
 {
 Bit8u *macHdr;
 macHdr = (Bit8u *) (txBuffer + 0);
@@ -211,6 +230,7 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
         macHdr[0+4],
         macHdr[0+5]);
 }
+#endif
       ret = write(fdTunTap, txBuffer, packetLen);
       if ( ret != packetLen ) {
         fprintf(stderr, "HalCallNetGuestTx: write(%u) bytes to TUN/TAP "
@@ -221,6 +241,90 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
       plex86GuestCPU->genReg[GenRegEAX] = 1; // Success.
       return;
       }
+
+    case HalCallConGuestRegDev:
+      {
+      unsigned deviceNo, rwAreaPAddr, rwAreaLen;
+
+      deviceNo    = plex86GuestCPU->genReg[GenRegEBX];
+      rwAreaPAddr = plex86GuestCPU->genReg[GenRegECX];
+      rwAreaLen   = plex86GuestCPU->genReg[GenRegEDX];
+      if ( deviceNo >= HalConMaxDevices ) {
+        fprintf(stderr, "HalCallConGuestRegDev: deviceNo=%u.\n", deviceNo);
+        goto error;
+        }
+      if ( halConDev[deviceNo].registered ) {
+        fprintf(stderr, "HalCallConGuestRegDev: deviceNo %u already "
+                        "registered.\n", deviceNo);
+        goto error;
+        }
+      if ( rwAreaLen < sizeof(halConGuestRwArea_t) ) {
+        fprintf(stderr, "HalCallConGuestRegDev: rwAreaLen(%u) too small.\n",
+                        rwAreaLen);
+        goto error;
+        }
+      if ( rwAreaPAddr >= (plex86MemSize - sizeof(halConGuestRwArea_t)) ) {
+        fprintf(stderr, "HalCallConGuestRegDev: rwAreaPAddr(0x%x) past "
+                        "guest physical memory limit.\n", rwAreaPAddr);
+        goto error;
+        }
+      halConDev[deviceNo].registered = 1;
+      halConDev[deviceNo].guestRwAreaPAddr = rwAreaPAddr;
+      halConDev[deviceNo].guestRwAreaLen   = rwAreaLen;
+      halConDev[deviceNo].guestRwArea =
+          (halConGuestRwArea_t *) &plex86MemPtr[rwAreaPAddr];
+      plex86GuestCPU->genReg[GenRegEAX] = 1; // Success.
+      return;
+      }
+
+    case HalCallConGuestWrite:
+      {
+      unsigned bufferI;
+      unsigned deviceNo, writeLen;
+      unsigned char c;
+
+      deviceNo   = plex86GuestCPU->genReg[GenRegEBX];
+      writeLen   = plex86GuestCPU->genReg[GenRegEDX];
+      if ( deviceNo >= HalConMaxDevices ) {
+        fprintf(stderr, "HalCallConGuestWrite: deviceNo=%u.\n", deviceNo);
+        goto error;
+        }
+      if ( writeLen > sizeof(halConDev[0].guestRwArea->txBuffer) ) {
+        fprintf(stderr, "HalCallConGuestWrite: writeLen(%u) OOB.\n", writeLen);
+        goto error;
+        }
+
+      bufferI = 0;
+      while ( writeLen ) {
+        if ( halConLineI >= LineLen ) {
+          // If previous characters filled the buffer, terminate them
+          // with a newline+NULL and print them out first, before processing
+          // the rest of the request.
+          halConLine[halConLineI++] = '\n'; // A newline.
+          halConLine[halConLineI]   = '\0'; // Terminate string.
+          fputs("> ", stderr);
+          fputs(halConLine, stderr);
+          halConLineI = 0; // Reset index.
+          }
+        c = halConDev[0].guestRwArea->txBuffer[bufferI++];
+        writeLen --;
+        if ( c == '\n' ) {
+          halConLine[halConLineI++] = c;    // The newline.
+          halConLine[halConLineI++] = '\0'; // Terminate string.
+          fputs("> ", stderr);
+          fputs(halConLine, stderr);
+          halConLineI = 0; // Reset index.
+          }
+        else if ( isgraph(c) )
+          halConLine[halConLineI++] = c; // Normal chars get passed through.
+        else
+          halConLine[halConLineI++] = ' '; // Transformed others to a space.
+        }
+
+      plex86GuestCPU->genReg[GenRegEAX] = 1; // Success.
+      return;
+      }
+
 
     default:
       fprintf(stderr, "halCall(%u) unknown.\n", callNo);
@@ -308,10 +412,12 @@ tuntapReadPacketToGuest(unsigned deviceNo)
       rxBuffer = halNetDev[deviceNo].guestRxArea->rxBuffer;
       packetLen = read(fdTunTap, rxBuffer, MaxEthernetFrameSize);
       if ( packetLen > 0 ) {
-Bit8u *macHdr;
+#ifdef TUNTAP_SPEW
+        Bit8u *macHdr;
         fprintf(stderr, "tuntapReadPacketToGuest: read %d bytes to guest.\n",
                 packetLen);
-macHdr = (Bit8u *) (rxBuffer + 0);
+        macHdr = (Bit8u *) (rxBuffer + 0);
+
 fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
                 "src: %02x:%02x:%02x:%02x:%02x:%02x\n",
         macHdr[0+0],
@@ -326,6 +432,7 @@ fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
         macHdr[6+3],
         macHdr[6+4],
         macHdr[6+5]);
+#endif
 
         halNetDev[deviceNo].guestRxArea->rxBufferFull = 1;
         halNetDev[deviceNo].guestRxArea->rxBufferLen  = packetLen;
@@ -342,7 +449,9 @@ fprintf(stderr, "dst: %02x:%02x:%02x:%02x:%02x:%02x <- "
         }
       }
     else {
+#ifdef TUNTAP_SPEW
       fprintf(stderr, "tuntapReadPacketToGuest: buffer full.\n");
+#endif
       }
     }
   else {
