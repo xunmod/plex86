@@ -355,7 +355,7 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
    */
   pageEntry_t *host_pgd;
   Bit32u host_cr3;
-  Bit32u addr; // start_addr;
+  Bit32u addr;
   unsigned n_pages;
   int i;
   unsigned good;
@@ -395,8 +395,10 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
   for (i = 0; i < n_pages; i++) {
     Bit32u laddr;
     unsigned long lpage;
-    pgd_t *pgdPtr; pmd_t *pmdPtr; pte_t *ptePtr;
-    pte_t  pteVal;
+    pgd_t *pgdPtr;
+    /* pmd_t *pmdPtr; */
+    pte_t *ptePtr;
+    Bit32u phyPageAddr;
 
     laddr = KERNEL_OFFSET + ((Bit32u) addr);
 
@@ -415,16 +417,29 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
  * Fixme: check for PAT bits.  We should have separate walks for PAE
  * Fixme: mode later, so don't need the 3 level walk below for PAE=0.
  */
-    /* Check that PS=0(4k), P=1(present). */
     if ( (pgdPtr->pgd & 0x81) == 0x1 ) {
-      pmdPtr = pmd_offset(pgdPtr, lpage);
-      if ( pmd_val(*pmdPtr) & 1 ) {
-        ptePtr = pte_offset(pmdPtr, lpage);
-        if ( pte_val(*ptePtr) & 1 ) {
-          pteVal = *ptePtr;
-          good = 1;
-          }
+      /* PS=0(4k), P=1(present). */
+      ptePtr = pte_offset(((pmd_t *)pgdPtr), lpage);
+      if ( pte_val(*ptePtr) & 1 ) {
+        phyPageAddr = pte_val(*ptePtr) & 0xfffff000;
+        good = 1;
         }
+      }
+    else if ( (pgdPtr->pgd & 0x81) == 0x81 ) {
+      /* PS=1(4M), P=1(present).  This is a 4M page; there is no 2nd level. */
+      if ( (pgdPtr->pgd & 0x003fe000) == 0 ) {
+        /* No reserved bits are set.  Since this is a 4M page, the upper 10
+         * address bits are from the PDE and the middle 10 address bits are
+         * passed through from the address itself.
+         */
+        phyPageAddr = (pgdPtr->pgd & 0xffc00000) |
+                      (laddr       & 0x003ff000);
+// Fixme: should I use laddr or lpage here?
+        good = 1;
+        }
+      }
+    else {
+      /* P=0(not present)? */
       }
 
 
@@ -437,8 +452,6 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
 /* Fixme: clean up printk for bad pages. */
       printk(KERN_ERR "plex86: retrievePhyPages: "
              "found a page table entry with an unexpected value.\n");
-      printk(KERN_ERR "plex86: If your kernel is PAE enabled, boot with "
-             "mem=nopentium.\n");
       return 0; /* Error, ran into unmapped page in memory range. */
       }
 
@@ -450,7 +463,7 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
       return 0;
       }
     /* Get physical page address for this virtual page address. */
-    page[i] = pte_val(pteVal) >> 12;
+    page[i] = phyPageAddr >> 12;
     /* Increment to the next virtual page address. */
     addr += 4096;
     }
