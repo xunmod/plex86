@@ -8,10 +8,7 @@
  *
  */
 
-// Fixme: delete these.
-//#include "plex86.h"
 #define IN_HOST_SPACE
-//#include "monitor.h"
 #include "config.h"
 #include "hostos.h"
 
