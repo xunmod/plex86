@@ -10,3 +10,17 @@ TODO:
 quickie.txt:
   Notes for quickly configuring, compiling, and testing plex86 on
   your system.
+
+FAQ:
+  The obvious.
+
+VERSIONS:
+  A list of past/present/future plex86 versions and related major
+  features/notes.
+
+nfs.txt:
+  A quick description of booting an NFS root filesystem.
+
+vm-criteria:
+  A list of host/guest/monitor criteria/constraints for running
+  lightweight VMs.

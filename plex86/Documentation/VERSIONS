@@ -2,7 +2,7 @@
        Plex86 versions & features list (past/present/future).
 
 
-v0_1: Released (TBD)
+v0_1: Release Date July 7, 2003.
 
   hosts=Linux 2.4.20, FreeBSD(no TUN/TAP)
   guests=Linux 2.4.20, (Linux 2.5.59: need to recompile plex86)
@@ -23,3 +23,14 @@ v0_1: Released (TBD)
 
   o The FreeBSD port doesn't use TUN/TAP, and can only boot the
     Linux kernel.  There's no place to send network packets to yet.
+
+  o Compiler warnings were moved to embedded comments with the
+    tag "fixme" in them.
+
+  o Lots of rough stuff and many optimizations possible.
+
+  o No floating point support yet.  Guest Linux kernel must be compiled
+    with floating point emulation enabled.
+
+  o Amount of (host) page pinning (non pageable) is fixed to 4 Megs for now.
+    This should be settable and allow for many more pages to be pinned.

@@ -1,0 +1,7 @@
+./linuxvm \
+  -megs 32 \
+  -linux-image ~/linux/vmlinux-2.4.20-plex86 \
+  -initrd-image 0x1a00000 ~/linux/initrd.2M.nfs \
+  -command-line "root=/dev/nfs nfsroot=host-vmnet:/export/rh73 mem=nopentium bogomips=989"
+
+#  -command-line "root=/dev/nfs nfsroot=host-vmnet:/export/nfsroot mem=nopentium bogomips=989"

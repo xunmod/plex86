@@ -1,0 +1,78 @@
+Booting/using NFS.
+
+Iain McFarlane assembled the necessary initrd image to do an NFS
+root mount.  For reference, here is his plex86 related URL
+(http://imcfarla.homelinux.net/plex.html), though files have been
+copied to the plex86 site.  An option passed to the Linux
+kernel tells Linux which directory to NFS mount as the root directory,
+so no modifications are necessary to the initrd image.
+
+Paul Menage put together a minimal RedHat 7.3 filesystem (130 RPMs,
+about 190MB total filesystem size) which you can boot/use.  You can
+ssh into the guest Linux from your host machine.  To use it, you
+will need the 2.4.20 Linux kernel compiled for plex86, a small
+initrd image which loads the guest HAL network driver and knows
+how to mount a root NFS filesystem thereafter, and of course the
+NFS tarball of the RH7.3 filesystem.
+
+Get all three of these files from the plex86 site:
+
+  (1) From the http://sourceforge.net/projects/plex86/ page, get
+  "RedHat 7.3 NFS root image" (rh73fs.tgz).
+
+  (2/3) From the http://plex86.sourceforge.net/downloads.html page, get
+  "Linux 2.4.20 image" (vmlinux-2.4.20-plex86.img), and
+  "Linux 2.4.20 NFS initrd" (initrd.2M.nfs).
+
+To use boot the NFS root, I am assuming you know how to export an NFS
+directory properly and have NFS serving established on your host.  Some
+basic steps follow.
+
+* You need to extract the root directory to the place where you will
+  export it on your host (server).  
+
+* Add the exported directory to /etc/exports.  For example:
+
+  /export/nfsroot 192.168.10.2(rw,no_root_squash)
+
+* Tell NFS about the new addition to /etc/exports.
+
+* For convenience, make/edit a script to start plex86 with the options
+  for the linux kernel image, initrd image, and kernel options line to
+  mount the NFS directory.  You can use host-user/doit-nfs as a reference.
+
+* Load the plex86 kernel driver (see 'Documentation/quickie.txt').
+
+* Start the plex86 user program.  For example, I do:
+
+  cd host-user
+  . doit-nfs
+
+* Enter ifconfig and arp commands as root in another shell
+  (see 'Documentation/quickie.txt').
+
+* Type 'Enter' at the user program prompt.
+
+* Watch the kernel boot.  When it is finished booting, it should display
+  something like:
+
+  "INIT: no more processes left in this runlevel"
+
+* At this point, you can SSH into the guest from the host.  The password
+  for root is 'plex86'.
+
+  ssh -l root guest-vmnet
+
+* When you are finished, execute the shutdown command with the '-f' option
+  (from the guest root command line) to skip fsck on the next boot.
+
+  shutdown -f -h -now
+
+* Quit the plex86 user program.
+
+======================================================================
+Notes from Paul Menage regarding the RedHat 7.3 filesystem:
+
+"In order to boot, I had to chmod -x /sbin/hwclock, otherwise plex86
+bombed out due to IOPL being non-zero; apart from that, everything went
+pretty smoothly."
