@@ -195,7 +195,7 @@ int halDisk_open (struct inode *inode, struct file *filp)
 
   if (unit >= HalDiskMaxDisks)
     return -ENODEV;
-  if (halDiskInfo[unit].exists==0)
+  if (halDiskInfo[unit].enabled==0)
     return -ENODEV;
   dev = halDisk_devices + unit;
 
@@ -221,6 +221,7 @@ int halDisk_release (struct inode *inode, struct file *filp)
    * If the device is closed for the last time.
    */
   if (!dev->usage) {
+// xxx: they use invalidate_device() instead of the next 2.
     /* but flush it right now */
     fsync_dev(inode->i_rdev);
     invalidate_buffers(inode->i_rdev);
@@ -343,7 +344,7 @@ halDiskDev_t *halDisk_locate_device(const struct request *req)
 
   /* Check if the minor number is in range */
   unit = DEVICE_NR(req->rq_dev);
-  if ( (unit>=HalDiskMaxDisks) || (halDiskInfo[unit].exists==0) ) {
+  if ( (unit>=HalDiskMaxDisks) || (halDiskInfo[unit].enabled==0) ) {
     static int count = 0;
     if (count++ < 5) /* print the message at most five times */
       printk(KERN_WARNING "halDisk: request for unknown device\n");
@@ -387,7 +388,7 @@ int halDisk_transfer(halDiskDev_t *device, const struct request *req)
       for (i=0; i<sectorCount; i++) {
         // Fixme: act on return value of halDiskRead
         halDiskRead(unit, sector+i, pAddr);
-        memcpy(req->buffer, (void*) lAddr, sectorCount*512);
+        memcpy(req->buffer+(i*512), (void*) lAddr, 512);
         }
       return 1;
 
@@ -395,8 +396,8 @@ int halDisk_transfer(halDiskDev_t *device, const struct request *req)
       lAddr = (unsigned) halDiskRwArea[unit]->rwBuffer;
       pAddr = lAddr - PAGE_OFFSET;
       for (i=0; i<sectorCount; i++) {
-        memcpy((void*) lAddr, req->buffer, sectorCount*512);
         // Fixme: act on return value of halDiskWrite
+        memcpy((void*) lAddr, req->buffer+(i*512), 512);
         halDiskWrite(unit, sector+i, pAddr);
         }
       return 1;
@@ -565,7 +566,7 @@ int halDisk_init(void)
   halDiskGetDiskInfo( ((unsigned) halDiskInfo) - PAGE_OFFSET );
 
   for (unit=0; unit<HalDiskMaxDisks; unit++) {
-    if ( halDiskInfo[unit].exists ) {
+    if ( halDiskInfo[unit].enabled ) {
       // This disk exists.  Create a RW area for it for the host<-->guest
       // communications.
       printk(KERN_INFO "halDisk(%u): Geom: C=%u/H=%u/SPT=%u.\n",
@@ -678,7 +679,10 @@ void halDisk_cleanup(void)
   for (unit = 0; unit<HalDiskMaxDisks; unit++) {
     halDiskDev_t *dev = halDisk_devices + unit;
     spin_lock(&dev->lock);
-    dev->usage++;
+    if (dev->usage) {
+      printk(KERN_WARNING "halDisk: cleanup with dev->usage set?\n");
+      }
+    //dev->usage++;
     spin_unlock(&dev->lock);
     }
 

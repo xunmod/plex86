@@ -125,7 +125,7 @@ halDiskCall(unsigned callNo)
       halDiskInfo = (halDiskInfo_t *) &plex86MemPtr[infoPAddr];
       for (unit=0; unit<HalDiskMaxDisks; unit++) {
         if (halDisk[unit].enabled) {
-          halDiskInfo[unit].exists          = halDisk[unit].enabled;
+          halDiskInfo[unit].enabled         = halDisk[unit].enabled;
           halDiskInfo[unit].geom.cylinders  = halDisk[unit].cylinders;
           halDiskInfo[unit].geom.heads      = halDisk[unit].heads;
           halDiskInfo[unit].geom.spt        = halDisk[unit].spt;

@@ -54,7 +54,7 @@ typedef struct {
   } halDiskGuestRwArea_t;
 
 typedef struct {
-  unsigned exists;    // This drive exists?
+  unsigned enabled;     // This drive is enabled.
   struct {
     unsigned cylinders; // Number of cylinders.
     unsigned heads;     // Number o heads.
