@@ -26,10 +26,6 @@
 #include "guest_stack_context.h"
 #include "io.h"
 
-#ifndef UNUSED
-#  define UNUSED(x) ((void)(x))
-#endif
-
 
 /* Method1: push event info (CPU pushes error code before) */
 typedef struct 
@@ -459,26 +455,6 @@ extern char __ret_to_guest;
 
 
 
-/*
- * This structure describes the pages containing the code/data
- * of the monitor itself (inside the kernel module)
- */
-
-#define Plex86MaxKernelModulePages 128
-
-typedef struct {
-  /* Virtual address space occupied by the kernel module. */
-  Bit32u startOffset;
-  Bit32u startOffsetPageAligned;
-  unsigned nPages; /* Number of pages. */
-    
-  /* A list of the Physical Page Indeces of the pages comprising the
-   * kernel module.  A PPI is just the physical page address >> 12.
-   */
-  Bit32u ppi[Plex86MaxKernelModulePages];
-  } kernelModulePages_t;
-
-extern kernelModulePages_t kernelModulePages;
 extern cpuid_info_t        hostCpuIDInfo;
 
 
@@ -489,12 +465,6 @@ extern cpuid_info_t        hostCpuIDInfo;
 
 
 #if defined(IN_HOST_SPACE) || defined(IN_MONITOR_SPACE)
-
-void  nexusMemZero(void *ptr, int size);
-void  nexusMemCpy(void *dst, void *src, int size);
-void *nexusMemSet(void *s, unsigned c, unsigned n);
-int   nexusVsnprintf(char *str, unsigned size, const char *fmt,
-                    va_list args);
 
 /*
  *  We need to set the monitor CS/DS base address so that the module pages,
@@ -563,13 +533,6 @@ vm_rdtsc(void) {
         : "memory"                              \
     )
 
-#define Plex86ErrnoEBUSY      1
-#define Plex86ErrnoENOMEM     2
-#define Plex86ErrnoEFAULT     3
-#define Plex86ErrnoEINVAL     4
-#define Plex86ErrnoEACCES     5
-#define Plex86ErrnoEAGAIN     6
-
 #define vm_save_flags(x) \
   __asm__ volatile("pushfl ; popl %0": "=g" (x): :"memory")
 
@@ -580,14 +543,9 @@ vm_rdtsc(void) {
 int      hostInitMonitor(vm_t *);
 unsigned hostMapMonitor(vm_t *);
 unsigned hostInitGuestPhyMem(vm_t *);
-void     hostUnallocVmPages(vm_t *);
 int      hostAllocVmPages(vm_t *, plex86IoctlRegisterMem_t *registerMsg);
 void     hostInitShadowPaging(vm_t *vm);
-void     hostDeviceOpen(vm_t *);
-unsigned hostModuleInit(void);
 unsigned hostGetCpuCapabilities(void);
-int      hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
-                          unsigned int cmd, unsigned long arg);
 int      hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg);
 int      hostIoctlRegisterMem(vm_t *vm, plex86IoctlRegisterMem_t *registerMsg);
 void     hostCopyGuestStateToUserSpace(vm_t *vm);
@@ -595,34 +553,9 @@ void     hostReleasePinnedUserPages(vm_t *vm);
 unsigned hostHandlePagePinRequest(vm_t *vm, Bit32u reqPPI);
 void     hostInitLinuxIOEnvironment(vm_t *vm);
 
-/* These are the functions that the host-OS-specific file of the
- * plex86 device driver must define.
- */
-unsigned hostOSIdle(void);
-void    *hostOSAllocZeroedMem(unsigned long size);
-void     hostOSFreeMem(void *ptr);
-void    *hostOSAllocZeroedPage(void);
-void     hostOSFreePage(void *ptr);
-unsigned hostOSGetAllocedMemPhyPages(Bit32u *page, int max_pages, void *ptr,
-                                   unsigned size);
-Bit32u   hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
-             Bit32u *ppi, Bit32u *kernelAddr);
-void     hostOSUnpinUserPage(vm_t *vm, Bit32u userAddr, void *osSpecificPtr,
-             Bit32u ppi, Bit32u *kernelAddr, unsigned dirty);
-Bit32u   hostOSGetAllocedPagePhyPage(void *ptr);
-void     hostOSKernelPrint(char *fmt, ...);
-void     hostOSUserPrint(vm_t *vm, char *fmt, ...);
-Bit32u   hostOSKernelOffset(void);
-int      hostOSConvertPlex86Errno(unsigned ret);
-void     hostOSModuleCountReset(vm_t *vm, void *inode, void *filp);
-void     hostOSInstrumentIntRedirCount(unsigned interruptVector);
-unsigned long hostOSCopyFromUser(void *to, void *from, unsigned long len);
-unsigned long hostOSCopyToUser(void *to, void *from, unsigned long len);
-unsigned long hostOSCopyFromUserIoctl(void *to, void *from, unsigned long len);
-unsigned long hostOSCopyToUserIoctl(void *to, void *from, unsigned long len);
-
 #endif  /* HOST Space */
 
+#include "hostos.h"
 
 
 

@@ -8,9 +8,12 @@
  *
  */
 
-#include "plex86.h"
+// Fixme: delete these.
+//#include "plex86.h"
 #define IN_HOST_SPACE
-#include "monitor.h"
+//#include "monitor.h"
+#include "config.h"
+#include "hostos.h"
 
 #include <linux/config.h>
 #include <linux/module.h>
@@ -71,8 +74,6 @@ static atomic_t interruptRedirCount[256];
 /* Use dynamic major number allocation. (Set non-zero for static allocation) */
 #define PLEX86_MAJOR 0
 static int plex_major = PLEX86_MAJOR;
-MODULE_PARM(plex_major, "i");
-MODULE_PARM_DESC(plex_major, "major number (default " __MODULE_STRING(PLEX86_MAJOR) ")");
 
 /* The kernel segment base. */
 #define KERNEL_OFFSET 0x00000000
@@ -85,11 +86,12 @@ static int plex86_open(struct inode *, struct file *);
 static int plex86_release(struct inode *, struct file *);
 static int plex86_mmap(struct file * file, struct vm_area_struct * vma);
 
-/* New License scheme. */
-#ifdef MODULE_LICENSE
+MODULE_AUTHOR("Kevin P. Lawton");
+MODULE_DESCRIPTION("Plex86 VM hypervisor");
 MODULE_LICENSE("GPL"); /* Close enough.  Keeps kernel from complaining. */
-#endif
 
+MODULE_PARM(plex_major, "i");
+MODULE_PARM_DESC(plex_major, "major number (default " __MODULE_STRING(PLEX86_MAJOR) ")");
 
 
 /************************************************************************/
@@ -223,10 +225,10 @@ cleanup_module(void)
   int
 plex86_open(struct inode *inode, struct file *filp)
 {
-  vm_t *vm;
+  void *vm;
 
   /* Allocate a VM structure. */
-  if ( (vm = hostOSAllocZeroedMem(sizeof(vm_t))) == NULL )
+  if ( (vm = hostOSAllocZeroedMem( hostGetvm_tSize() )) == NULL )
     return -ENOMEM;
   filp->private_data = vm;
   
@@ -240,14 +242,14 @@ plex86_open(struct inode *inode, struct file *filp)
   int
 plex86_release(struct inode *inode, struct file *filp)
 {
-  vm_t *vm = (vm_t *)filp->private_data;
+  void *vm = (void *)filp->private_data;
   filp->private_data = NULL;
 
   /* Free the virtual memory. */
   hostUnallocVmPages( vm );
 
   /* Free the VM structure. */
-  memset( vm, 0, sizeof(*vm) );
+  memset( vm, 0, hostGetvm_tSize() );
   vfree( vm );
 
   return(0);
@@ -258,7 +260,7 @@ plex86_release(struct inode *inode, struct file *filp)
 plex86_ioctl(struct inode *inode, struct file *filp,
              unsigned int cmd, unsigned long arg)
 {
-  vm_t *vm = (vm_t *)filp->private_data;
+  void *vm = (void *)filp->private_data;
   int ret;
 
   /* Call non host-specific ioctl() code which calls back to this
@@ -278,7 +280,7 @@ plex86_ioctl(struct inode *inode, struct file *filp,
   int
 plex86_mmap(struct file * file, struct vm_area_struct * vma)
 {
-  vm_t *vm = (vm_t *)file->private_data;
+  void *vm = (void *)file->private_data;
   UNUSED(vm);
   return -EINVAL;
 }
@@ -353,8 +355,8 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
    * the physical pages underlying a vmalloc()'ed area.  We do it the
    * hard way ... 
    */
-  pageEntry_t *host_pgd;
-  Bit32u host_cr3;
+  //pageEntry_t *host_pgd;
+  //Bit32u host_cr3;
   Bit32u addr;
   unsigned n_pages;
   int i;
@@ -389,8 +391,9 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
       }
     }
 
-  __asm__ volatile ("movl %%cr3, %0" : "=r" (host_cr3));
-  host_pgd = (pageEntry_t *)(phys_to_virt(host_cr3 & ~0xfff));
+  // Fixme: get rid of this CR3 reading code.
+  //__asm__ volatile ("movl %%cr3, %0" : "=r" (host_cr3));
+  //host_pgd = (pageEntry_t *)(phys_to_virt(host_cr3 & ~0xfff));
 
   for (i = 0; i < n_pages; i++) {
     Bit32u laddr;
@@ -557,7 +560,7 @@ hostOSKernelPrint(char *fmt, ...)
 }
 
   void
-hostOSUserPrint(vm_t *vm, char *fmt, ...)
+hostOSUserPrint(void *vm, char *fmt, ...)
 {
   if ( (vm == 0) ||
        1 ) { // fixme: hostOSUserPrint
@@ -609,7 +612,7 @@ hostOSKernelOffset(void)
 }
 
   void
-hostOSModuleCountReset(vm_t *vm, void *inode, void *filp)
+hostOSModuleCountReset(void *vm, void *inode, void *filp)
 {
 }
 
@@ -638,7 +641,7 @@ hostOSCopyToUserIoctl(void *to, void *from, unsigned long len)
 }
 
   Bit32u
-hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
+hostOSGetAndPinUserPage(void *vm, Bit32u userAddr, void **osSpecificPtr,
                       Bit32u *ppi, Bit32u *kernelAddr)
 {
   int    ret;
@@ -656,7 +659,7 @@ hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
                        NULL /* struct vm_area_struct *[] */
                        );
   if (ret != 1) {
-    printk(KERN_ERR "plex86: hostGetAndPinUserPages: failed.\n");
+    printk(KERN_ERR "plex86: hostOSGetAndPinUserPages: failed.\n");
     return(0); /* Error. */
     }
 
@@ -680,7 +683,7 @@ hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
 }
 
   void
-hostOSUnpinUserPage(vm_t *vm, Bit32u userAddr, void *osSpecificPtr,
+hostOSUnpinUserPage(void *vm, Bit32u userAddr, void *osSpecificPtr,
                           Bit32u ppi, Bit32u *kernelAddr, unsigned dirty)
 {
 #if 0

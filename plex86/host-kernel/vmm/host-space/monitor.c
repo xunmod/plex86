@@ -104,8 +104,9 @@ hostModuleInit(void)
 }
 
   void
-hostDeviceOpen(vm_t *vm)
+hostDeviceOpen(void *vmPtr)
 {
+  vm_t *vm = vmPtr;
   /* Kernel independent stuff to do at device open time. */
 
   /* Zero out entire VM structure. */
@@ -736,9 +737,11 @@ hostMapBlankPage(vm_t *vm, Bit32u *laddr_p, page_t *pageTable)
 #endif
 
   int
-hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
+hostIoctlGeneric(void *vmPtr, void *inode, void *filp,
                  unsigned int cmd, unsigned long arg)
 {
+  vm_t *vm = vmPtr;
+
   switch (cmd) {
 
     /*
@@ -1854,8 +1857,10 @@ vm->vmState |= VMStateRegisteredPrintBuffer; /* For now. */
 /* */
 
   void
-hostUnallocVmPages( vm_t *vm )
+hostUnallocVmPages( void *vmPtr )
 {
+  vm_t *vm = vmPtr;
+
   vm_pages_t *pg = &vm->pages;
   vm_addr_t  *ad = &vm->host.addr;
 
@@ -2244,4 +2249,10 @@ hostInitLinuxIOEnvironment(vm_t *vm)
   vm->io.pit.timer[2].OUT  = 1;
 
   nexusMemZero(&vm->io.vga, sizeof(vm->io.vga));
+}
+
+  unsigned
+hostGetvm_tSize(void)
+{
+  return( sizeof(vm_t) );
 }
