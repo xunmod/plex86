@@ -754,7 +754,7 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
 
     case PLEX86_UNREGISTER_MEMORY:
       {
-#warning "UNREGISTER_MEMORY: not completed."
+// Fixme: UNREGISTER_MEMORY: not completed.
       vm->vmState &= ~VMStateRegisteredAll;
       return( 0 );
       }
@@ -802,7 +802,7 @@ hostIoctlGeneric(vm_t *vm, void *inode, void *filp,
       return ret;
       }
 
-#warning "PLEX86_RESET should only conditionally compiled for debugging."
+// Fixme: PLEX86_RESET should only conditionally compiled for debugging.
     /*
      * For debugging, when the module gets hosed, this is a way
      * to reset the in-use count, so we can rmmod it.
@@ -1105,7 +1105,7 @@ handleFailSegReg:
         }
       }
     }
-#warning "Have to clear out GDT, especially with ring changes"
+// Fixme: Have to clear out GDT, especially with ring changes.
 
   if ( vm->guestCPL==0 ) {
     /* For running guest kernel code, push privilege down to user. */
@@ -1163,7 +1163,7 @@ handleFailSegReg:
 
   guestStackContext->esp = guest_cpu->genReg[GenRegESP];
 
-#warning "Monitor CRx hacks"
+// Fixme: Monitor CRx hacks.
   nexus->mon_cr0 = 0x8001003b | /* PG/WP/NE/ET/TS/MP/PE */
     (guest_cpu->cr0.raw & 0x00040000); /* Pass-thru AM from guest. */
   /* Could move mon_cr3 load to mapMonitor. */
@@ -1243,7 +1243,7 @@ executeVMLoop:
       soft_int(vm->redirect_vector); /* sets IF to 1 */
       hostOSInstrumentIntRedirCount(vm->redirect_vector);
 
-#warning "Fixme: hostOSIdle code."
+// Fixme: hostOSIdle code.
       /* Let host decide whether we are allowed another timeslice */
       if ( !hostOSIdle() ) {
         /* We are returning only because the host wants to
@@ -1299,7 +1299,7 @@ guest_cpu->INTR = vm->system.INTR;
           executeMsg->instructionsExecuted = 0; /* Handle later. */
           executeMsg->monitorState.state   = vm->vmState;
           executeMsg->monitorState.request = vm->mon_request;
-#warning "Fixme: copy asynchronous fields here."
+// Fixme: copy asynchronous fields here.
           // Copy asynchronous fields here / hostIoctlExecute() /
           //   hostCopyGuestStateToUserSpace()
           guest_cpu->INTR = vm->system.INTR;
@@ -1476,7 +1476,7 @@ hostCopyGuestStateToUserSpace(vm_t *vm)
 
   if ( vm->linuxVMMode && (vm->guestCPL==0) ) {
 
-#warning "Remove this DEBUG code."
+// Fixme: Remove this DEBUG code.
 //if (guestStackContext->eflags.raw & (1<<19))
 //hostOSKernelPrint("Guest.VIF=1");
 
@@ -1584,7 +1584,7 @@ hostIoctlRegisterMem(vm_t *vm, plex86IoctlRegisterMem_t *registerMemMsg)
     hostUnallocVmPages(vm);
     return -Plex86ErrnoEFAULT;
     }
-#warning "Fixme: hostInitLinuxIOEnvironment should depend on linuxVMMode"
+// Fixme: hostInitLinuxIOEnvironment should depend on linuxVMMode.
   //if ( vm->linuxVMMode ) {
     hostInitLinuxIOEnvironment(vm);
     //}
@@ -1602,7 +1602,7 @@ hostAllocVmPages(vm_t *vm, plex86IoctlRegisterMem_t *registerMemMsg)
 {
   vm_pages_t *pg = &vm->pages;
   vm_addr_t  *ad = &vm->host.addr;
-#warning "Fix these shortcuts"
+// Fixme: these shortcuts.
   unsigned where = 1;
 
   /* clear out allocated pages lists */
@@ -1906,7 +1906,7 @@ hostMapMonitor(vm_t *vm)
   nexus        = vm->host.addr.nexus;
   gdt          = vm->host.addr.gdt;
 
-#warning "Is the GDT being cleared of old values?"
+// Fixme: Is the GDT being cleared of old values?
 /* +++ should zero out GDT, so prev entries do not remain */
 
   /* =========================
@@ -2031,7 +2031,7 @@ hostReleasePinnedUserPages(vm_t *vm)
       void *osSpecificPtr;
 
       osSpecificPtr = (void *) vm->hostStructPagePtr[ppi];
-#warning "Conditionalize page dirtying before page release."
+// Fixme: Conditionalize page dirtying before page release.
       dirty = 1; /* FIXME: 1 for now. */
       hostOSUnpinUserPage(vm,
           vm->guestPhyMemAddr + (ppi<<12),
@@ -2060,7 +2060,7 @@ hostReleasePinnedUserPages(vm_t *vm)
       vm->pages.userLogBuffer[0],
       &kernelAddr,
       1 /* Dirty. */);
-#warning "User space address is passed as 0 for now..."
+// Fixme: User space address is passed as 0 for now...
 }
 
   unsigned
@@ -2069,7 +2069,7 @@ hostHandlePagePinRequest(vm_t *vm, Bit32u reqGuestPPI)
   Bit32u hostPPI;
   unsigned qIndex;
 
-#warning "We must not unpin open pages (for page walking) here."
+// Fixme: We must not unpin open pages (for page walking) here.
   if (vm->guestPhyPagePinQueue.nEntries < MaxPhyPagesPinned) {
     /* There is room in the Q for another entry - we have not reached
      * the upper limit of allowable number of pinned pages.
@@ -2095,8 +2095,8 @@ hostHandlePagePinRequest(vm_t *vm, Bit32u reqGuestPPI)
         0 /* There was no host kernel addr mapped for this page. */,
         dirty);
     vm->pageInfo[unpinGuestPPI].attr.fields.pinned = 0;
-#warning "fixme: unpinning page, calling hostInitShadowPaging for now."
-#warning "fixme: do something more intelligent later."
+// Fixme: unpinning page, calling hostInitShadowPaging for now.
+// Fixme: do something more intelligent later.
 // Also mods the tsc?
 hostInitShadowPaging(vm);
     }
@@ -2139,7 +2139,7 @@ hostInitShadowPaging(vm);
   void
 hostInitLinuxIOEnvironment(vm_t *vm)
 {
-#warning "fixme: memzeros are redundant here"
+// Fixme: memzeros are redundant here.
   //   no auto-eoi
   nexusMemZero(&vm->io.picMaster, sizeof(vm->io.picMaster));
   vm->io.picMaster.imr = 0xff;

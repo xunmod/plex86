@@ -675,7 +675,7 @@ hostOSUserPrint(vm_t *vm, char *fmt, ...)
       }
     }
   else {
-#warning "Fix hostOSUserPrint"
+// Fixme: Fix hostOSUserPrint.
     hostOSKernelPrint("plex86: hostOSUserPrint unfinished.");
     }
 }
@@ -777,8 +777,8 @@ hostOSGetAndPinUserPage(vm_t *vm, Bit32u userAddr, void **osSpecificPtr,
      * address.
      */
     *kernelAddr = (Bit32u) kmap( page );
-#warning "FIXME: Check return value here."
-#warning "Also, conditionally compile for version and high memory support."
+// Fixme: Check return value here.
+// Fixme: Also, conditionally compile for version and high memory support.
     }
   return(1); /* OK. */
 }

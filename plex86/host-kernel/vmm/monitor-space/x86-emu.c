@@ -115,7 +115,7 @@ static const unsigned dataSReg[4] = { SRegES, SRegDS, SRegFS, SRegGS };
 //static descriptor_t nullDesc = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 static const phyAddr_t LinAddrNotAvailable = -1;
 
-#warning "move guestStackGenRegOffsets and add some sanity checks"
+// Fixme: move guestStackGenRegOffsets and add some sanity checks.
 static const int guestStackGenRegOffsets[8] = {
   44, /* EAX */
   40, /* ECX */
@@ -182,7 +182,7 @@ doGuestFault(vm_t *vm, unsigned fault, unsigned errorCode)
       break;
 
     case ExceptionPF:
-#warning "Fixme: errorCode needs to be corrected for pushed-down priv level."
+// Fixme: errorCode needs to be corrected for pushed-down priv level.
 
       // If this Page Fault was from non-user code, we need to fix-up the
       // privilege level bit in the error code.  This really should be moved
@@ -875,7 +875,10 @@ monInitShadowPaging(vm); // Fixme:
   unsigned
 setDRx(vm_t *vm, unsigned drx, Bit32u val32)
 {
-  monprint(vm, "setDR%u: ignoring val=0x%x.\n", drx, val32);
+  if ( ! ((drx==7) && (val32==0)) ) {
+    // Setting DR7 to 0 was spewing a lot of lines.
+    monprint(vm, "setDR%u: ignoring val=0x%x.\n", drx, val32);
+    }
   // Fixme: faked out for now.
   return 1; // OK.
 }
@@ -968,7 +971,7 @@ loadGuestSegment(vm_t *vm, unsigned sreg, selector_t selector)
     monpanic(vm, "loadGuestSegment: descriptor.dpl != selector.rpl.\n");
     }
 
-#warning "Fixme: loadGuestSegment: need checks for .type, .p, .base, .limit etc."
+// Fixme: loadGuestSegment: need checks for .type, .p, .base, .limit etc.
 
   switch ( sreg ) {
     case SRegES:
@@ -1770,7 +1773,7 @@ doWRMSR(vm_t *vm)
 }
 
 // Fixme: this is fetching a descriptor again.
-#warning "guestSelectorUpdated should take a descriptor parameter."
+// Fixme: guestSelectorUpdated should take a descriptor parameter.
 
   void
 guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t sel)
@@ -1874,7 +1877,7 @@ guestSelectorUpdated(vm_t *vm, unsigned segno, selector_t sel)
       }
 
     /* Install virtualized guest descriptors in GDT. */
-#warning "Check gdtSlot for OOB here?"
+// Fixme: Check gdtSlot for OOB here?
     vm->guest.addr.gdt[gdtSlot] = desc;
     /* Descriptors are always virtualized down to ring3. */
     if (desc.dpl != 3)
@@ -1894,5 +1897,5 @@ handleFailSegReg:
     }
 #endif
 
-#warning "Have to clear out GDT, especially with ring changes"
+// Fixme: Have to clear out GDT, especially with ring changes.
 }

@@ -69,9 +69,9 @@ static void sanity_check_pdir(vm_t *vm, unsigned id, Bit32u guest_laddr);
 #endif
 
 
-#warning "Have to be careful unpinning a page which is open"
-#warning "  via open_guest_phy_page().  Multiple pages could be"
-#warning "  open in the page walk at one time until D/A bits are set."
+// Fixme: Have to be careful unpinning a page which is open
+// Fixme: via open_guest_phy_page().  Multiple pages could be
+// Fixme: open in the page walk at one time until D/A bits are set.
 
 
 
@@ -350,7 +350,7 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
       goto np_exception;
       }
 
-#warning "ignoring PDEUnhandled bits"
+// Fixme: ignoring PDEUnhandled bits
 #if 0
     if (guestPDE.raw & PDEUnhandled)
       monpanic(vm, "mapGuestLinAddr: guestPDE 0x%08x\n", guestPDE.raw);
@@ -391,7 +391,7 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
       goto access_exception;
       }
 
-#warning "ignoring PTEUnhandled bits"
+// Fixme: ignoring PTEUnhandled bits.
 #if 0
     if (guestPTE.raw & PTEUnhandled)
       monpanic(vm, "mapGuestLinAddr: guestPTE 0x%08x\n", guestPTE.raw);
@@ -461,7 +461,7 @@ mapGuestLinAddr(vm_t *vm, Bit32u guest_laddr, Bit32u *guest_ppi,
           getPageUsage(vm, A20PageIndex(vm, guestPDE.fields.base));
       if (pde_pusage->attr.raw & PageBadUsage4PTbl) {
 
-#warning "PDE->PDir hack"
+// Fixme: PDE->PDir hack.
 monpanic(vm, "PDE->PDir hack.\n");
 //monpanic(vm, "PDE.base=0x%x CR3=0x%x\n",
 //         A20PageIndex(vm, guestPDE.fields.base),

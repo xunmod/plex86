@@ -15,7 +15,8 @@
 
 
 
-#warning "Deal with CLI/STI bracketing here and in monitor-mon.c"
+// Fixme: Deal with CLI/STI bracketing here and in monitor.c
+// Fixme: Already done?
 
 
 /* The monitor stack frame.  When an exception or interrupt occurrs
@@ -260,7 +261,7 @@ preGuest(guestStackContext_t *context)
     context->eflags.fields.vip = vm->system.INTR;
     }
 
-#warning "Remove this debug code."
+// Fixme: Remove this debug code.
 if (context->eflags.fields.if_ == 0) monpanic_nomess(vm);
 
   CLI();
@@ -285,7 +286,7 @@ handleGuestFault(guestStackContext_t *context)
   t1 = vm_rdtsc();
   vm->system.cyclesElapsed += (t1 - vm->system.t0);
 
-#warning "Delete these checks"
+// Fixme: Delete these checks.
 #if ANAL_CHECKS
   if ( !context->eflags.fields.if_ )
     monpanic(vm, "handleGuestFault: guest IF=0.\n");
