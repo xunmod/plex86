@@ -52,6 +52,7 @@ ramdisk_location=$[($megs*1024*1024)-$ramdisk_size_bytes]
 if [ "x$nfs_root" == "x" ]; then
   linux_cmdline="root=/dev/ram0 init=/linuxrc mem=nopentium rw"
   linux_cmdline="$linux_cmdline ramdisk_size=$ramdisk_size_k bogomips=$bogomips"
+  linux_cmdline="$linux_cmdline wanker=20,5,10"
 else
   linux_cmdline="root=/dev/nfs nfsroot=$nfs_root mem=nopentium bogomips=$bogomips"
 fi

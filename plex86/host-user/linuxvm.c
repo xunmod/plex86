@@ -708,7 +708,7 @@ executeLoop:
         goto executeLoop;
 
       case MonReqRedirect:
-        // Monitor had an interrupt redirect and their was work to do,
+        // Monitor had an interrupt redirect and there was work to do,
         // so it returned from the ioctl() call.  Nothing for us to do
         // except return to the monitor.
         goto executeLoop;

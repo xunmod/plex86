@@ -18,6 +18,7 @@
 #define HalCallNetGuestRegDev 2
 #define HalCallConGuestWrite  3
 #define HalCallConGuestRegDev 4
+#define HalCallDiskGetGeoms   5
 
 // 1500 bytes data, 2x 6-byte addresses, 1x 2-byte type field.
 #define MaxEthernetFrameSize 1514
@@ -38,5 +39,27 @@ typedef struct {
   Bit8u     rxBuffer[MaxConsoleFrameSize];
   Bit8u     txBuffer[MaxConsoleFrameSize];
   } halConGuestRwArea_t;
+
+#define MaxDiskBlockSize 1024
+#define HalDiskOpRead    1
+#define HalDiskOpWrite   2
+#define HalDiskMaxDisks  4
+
+  /* Note that this whole structure should not exceed 4096-bytes in size. */
+typedef struct {
+  unsigned  sectorNo;
+  unsigned  op;
+  Bit8u     rwBuffer[MaxDiskBlockSize];
+  } halDiskGuestRwArea_t;
+
+typedef struct {
+  struct {
+    unsigned exists;    // This drive exists?
+    unsigned cylinders; // Number of cylinders.
+    unsigned heads;     // Number o heads.
+    unsigned spt;       // Sectors per track.
+    unsigned start;     // Fixme: ???
+    } geom[HalDiskMaxDisks];
+  } halDiskGeoms_t; // Fixme: should this be only in the guest driver?
 
 #endif  /* __HAL_H__ */

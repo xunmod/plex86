@@ -81,6 +81,7 @@ struct net_device snull_devs[2] = {
 #include "hal.h"
 
 /* One HAL Rx area for each device. */
+/* Fixme: [2] should be a #define, and only 1 is allocated/handled. */
 static halNetGuestRxArea_t *halNetGuestRxArea[2] = { 0, 0 } ;
 
 /* This is a load-time options */
@@ -597,6 +598,7 @@ int snull_init_module(void)
   halNetGuestRxArea[0] = (halNetGuestRxArea_t *)
       get_zeroed_page(GFP_KERNEL | __GFP_DMA);
   if ( !halNetGuestRxArea[0] ) {
+    // Fixme: should we unregister the netdev here?
     return -ENODEV;
     }
 

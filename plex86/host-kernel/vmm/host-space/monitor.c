@@ -857,8 +857,21 @@ hostIoctlExecute(vm_t *vm, plex86IoctlExecute_t *executeMsg)
 
   vm->system.INTR = guest_cpu->INTR;
 
+  if (vm->mon_request == MonReqHalCall) {
+    /* Could use memcpy(); both are in order.  Pack both structs. */
+    guestStackContext->edi = guest_cpu->genReg[GenRegEDI];
+    guestStackContext->esi = guest_cpu->genReg[GenRegESI];
+    guestStackContext->ebp = guest_cpu->genReg[GenRegEBP];
+    guestStackContext->dummy_esp = 0; /* Not needed. */
+    guestStackContext->ebx = guest_cpu->genReg[GenRegEBX];
+    guestStackContext->edx = guest_cpu->genReg[GenRegEDX];
+    guestStackContext->ecx = guest_cpu->genReg[GenRegECX];
+    guestStackContext->eax = guest_cpu->genReg[GenRegEAX];
+    vm->mon_request = MonReqNone;
+    goto executeVMLoop;
+    }
+
   if ( (vm->mon_request == MonReqFlushPrintBuf) ||
-       (vm->mon_request == MonReqHalCall) ||
 (vm->mon_request == MonReqBogus) ||  // Fixme:
        (vm->mon_request == MonReqRedirect) ) {
     /* If the last message sent to user space was a print buffer flush,

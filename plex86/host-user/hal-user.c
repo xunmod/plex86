@@ -326,6 +326,30 @@ fprintf(stderr, "src: %02x:%02x:%02x:%02x:%02x:%02x -> "
       return;
       }
 
+    case HalCallDiskGetGeoms:
+      {
+      unsigned unit, exists, cylinders, heads, spt;
+
+      unit   = plex86GuestCPU->genReg[GenRegEBX];
+      if (unit <= 1) {
+        unsigned size = (2048 * 1024 / 512);
+        exists = 1;
+        cylinders = (size & ~0x3f) >> 6;
+        heads = 4;
+        spt = 16;
+        }
+      else {
+        exists = 0;
+        cylinders = 0;
+        heads = 0;
+        spt = 0;
+        }
+      plex86GuestCPU->genReg[GenRegEAX] = exists;
+      plex86GuestCPU->genReg[GenRegEBX] = cylinders;
+      plex86GuestCPU->genReg[GenRegECX] = heads;
+      plex86GuestCPU->genReg[GenRegEDX] = spt;
+      return;
+      }
 
     default:
       fprintf(stderr, "halCall(%u) unknown.\n", callNo);
