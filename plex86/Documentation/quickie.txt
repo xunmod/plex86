@@ -32,7 +32,8 @@ Requirements: Linux host 2.4.20+, Linux guest 2.4+.
    filesystem for the guest Linux to mount, since it boots in straight
    32-bit protected mode and has no disk drivers builtin at all.
 
-  EASY: Download a sample initrd for 2.4.20 from the main website.
+  EASY: Download a sample initrd for 2.4.20 from the main website.  Then
+    uncompress it with 'gunzip'.
 
   HARDCORE: It's a bit of work getting all the right files and dynamic
     libraries together.  If you like making initrd images, you don't need
