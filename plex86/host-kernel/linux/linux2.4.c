@@ -25,12 +25,8 @@
 #include <asm/atomic.h>
 
 
-#ifndef VERSION_CODE
-#  define VERSION_CODE(vers,rel,seq) ( ((vers)<<16) | ((rel)<<8) | (seq) )
-#endif
 
-
-#if LINUX_VERSION_CODE < VERSION_CODE(2,4,20)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,4,20)
 /* I use get_user_pages() to find and pin physical pages of memory
  * underlying the guest physical memory malloc()'d from user space.
  * This became an exported symbol available for kernel modules
@@ -41,9 +37,7 @@
 #endif
 
 
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,0)
-#  include <asm/uaccess.h>
-#endif
+#include <asm/uaccess.h>
 
 #include <asm/io.h>
 
@@ -57,15 +51,8 @@
 #  define EXPORT_NO_SYMBOLS register_symtab(NULL)
 #endif
 
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,29)
-#  define proc_register_dynamic proc_register
-#endif
-
-#if LINUX_VERSION_CODE < VERSION_CODE(2,2,0)
-#define NEED_RESCHED need_resched
-#else
+#define proc_register_dynamic proc_register
 #define NEED_RESCHED current->need_resched
-#endif
 
 
 
@@ -77,35 +64,6 @@ static atomic_t interruptRedirCount[256];
 
 
 
-#if LINUX_VERSION_CODE < VERSION_CODE(2,1,0)
-  static inline unsigned long
-copy_from_user(void *to, const void *from, unsigned long n)
-{
-  int i;
-  if ( (i = verify_area(VERIFY_READ, from, n)) != 0 )
-    return i;
-  memcpy_fromfs(to, from, n);
-  return 0;
-}
-  static inline unsigned long
-copy_to_user(void *to, const void *from, unsigned long n)
-{
-  int i;
-  if ( (i = verify_area(VERIFY_WRITE, to, n)) != 0 )
-    return i;
-  memcpy_tofs(to, from, n);
-  return 0;
-}
-#endif
-
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,18) && !defined(THIS_MODULE)
-/* Starting with version 2.1.18, the __this_module symbol is present,
- * but the THIS_MODULE #define was introduced much later ...
- */
-#define THIS_MODULE (&__this_module)
-#endif
-
-
 /************************************************************************/
 /* Declarations                                                         */
 /************************************************************************/
@@ -113,42 +71,23 @@ copy_to_user(void *to, const void *from, unsigned long n)
 /* Use dynamic major number allocation. (Set non-zero for static allocation) */
 #define PLEX86_MAJOR 0
 static int plex_major = PLEX86_MAJOR;
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,18)
 MODULE_PARM(plex_major, "i");
 MODULE_PARM_DESC(plex_major, "major number (default " __MODULE_STRING(PLEX86_MAJOR) ")");
-#endif
 
 /* The kernel segment base. */
-#if LINUX_VERSION_CODE < VERSION_CODE(2,1,0)
-#  define KERNEL_OFFSET 0xc0000000
-#else
-#  define KERNEL_OFFSET 0x00000000
-#endif
+#define KERNEL_OFFSET 0x00000000
 
 
 /* File operations. */
 static int plex86_ioctl(struct inode *, struct file *, unsigned int,
                         unsigned long);
 static int plex86_open(struct inode *, struct file *);
-
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,31)
 static int plex86_release(struct inode *, struct file *);
-#else
-static void plex86_release(struct inode *, struct file *);
-#endif
-
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,0)
 static int plex86_mmap(struct file * file, struct vm_area_struct * vma);
-#else
-static int plex86_mmap(struct inode * inode, struct file * file,
-                       struct vm_area_struct * vma);
-#endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,9)
 /* New License scheme. */
 #ifdef MODULE_LICENSE
 MODULE_LICENSE("GPL"); /* Close enough.  Keeps kernel from complaining. */
-#endif
 #endif
 
 
@@ -164,9 +103,7 @@ static unsigned retrievePhyPages(Bit32u *page, int max_pages, void *addr,
 
 
 static struct file_operations plex86_fops = {
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,4,0)
   owner:    THIS_MODULE,
-#endif
   mmap:     plex86_mmap,
   ioctl:    plex86_ioctl,
   open:     plex86_open,
@@ -180,23 +117,8 @@ devfs_handle_t my_devfs_entry;
 #endif
 
 /* For the /proc/driver/plex86 entry. */
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,4,0) /* XXX - How far back? */
 int plex86_read_procmem(char *, char **, off_t, int);
-#else
-int plex86_read_procmem(char *, char **, off_t, int, int);
-#endif
 
-#if LINUX_VERSION_CODE < VERSION_CODE(2,3,25)
-static struct proc_dir_entry plex86_proc_entry = {
-  0,                  /* dynamic inode */
-  6, "driver/plex86",     /* len, name */
-  S_IFREG | S_IRUGO,  /* mode */
-  1, 0, 0,
-  0,
-  NULL,
-  &plex86_read_procmem,  /* read function */
-  };
-#endif
 
 #if CONFIG_X86_PAE
 #  error "CONFIG_X86_PAE defined for this kernel, but unhandled in plex86"
@@ -231,12 +153,8 @@ init_module(void)
 
   /* Register the /proc entry. */
 #ifdef CONFIG_PROC_FS
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,3,25)
   if (!create_proc_info_entry("driver/plex86", 0, NULL, plex86_read_procmem))
     printk(KERN_ERR "plex86: registering /proc/driver/plex86 failed\n");
-#else
-  proc_register_dynamic(&proc_root, &plex86_proc_entry);
-#endif
 #endif
 
   /* Register /dev/misc/plex86 with devfs. */
@@ -272,11 +190,7 @@ fail_cpu_capabilities:
 fail_retrieve_pages:
   /* Unregister /proc entry. */
 #ifdef CONFIG_PROC_FS
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,3,25)
   remove_proc_entry("driver/plex86", NULL);
-#else
-  proc_unregister(&proc_root, plex86_proc_entry.low_ino);
-#endif
 #endif
 
   /* Unregister device. */
@@ -292,11 +206,7 @@ cleanup_module(void)
 
   /* Unregister /proc entry. */
 #ifdef CONFIG_PROC_FS
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,3,25)
   remove_proc_entry("driver/plex86", NULL);
-#else
-  proc_unregister(&proc_root, plex86_proc_entry.low_ino);
-#endif
 #endif
 
 #ifdef CONFIG_DEVFS_FS
@@ -314,9 +224,6 @@ cleanup_module(void)
 plex86_open(struct inode *inode, struct file *filp)
 {
   vm_t *vm;
-#if LINUX_VERSION_CODE < VERSION_CODE(2,4,0)
-  MOD_INC_USE_COUNT;
-#endif
 
   /* Allocate a VM structure. */
   if ( (vm = hostOSAllocZeroedMem(sizeof(vm_t))) == NULL )
@@ -330,11 +237,7 @@ plex86_open(struct inode *inode, struct file *filp)
 }
 
 
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,31)
   int
-#else
-  void
-#endif
 plex86_release(struct inode *inode, struct file *filp)
 {
   vm_t *vm = (vm_t *)filp->private_data;
@@ -347,13 +250,7 @@ plex86_release(struct inode *inode, struct file *filp)
   memset( vm, 0, sizeof(*vm) );
   vfree( vm );
 
-#if LINUX_VERSION_CODE < VERSION_CODE(2,4,0)
-  MOD_DEC_USE_COUNT;
-#endif
-
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,31)
   return(0);
-#endif
 }
 
 
@@ -379,11 +276,7 @@ plex86_ioctl(struct inode *inode, struct file *filp,
 
 
   int
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,1,0)
 plex86_mmap(struct file * file, struct vm_area_struct * vma)
-#else
-plex86_mmap(struct inode * inode, struct file * file, struct vm_area_struct * vma)
-#endif
 {
   vm_t *vm = (vm_t *)file->private_data;
   UNUSED(vm);
@@ -397,11 +290,7 @@ plex86_mmap(struct inode * inode, struct file * file, struct vm_area_struct * vm
 
   int
 plex86_read_procmem(char *buf, char **start, off_t offset,
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,4,0)
                     int len
-#else
-                    int len, int unused
-#endif
                     )
 {
   unsigned i;
@@ -427,13 +316,8 @@ retrieveKernelModulePages(void)
    * hence we rely on the fact that Linux lets at least one page of 
    * virtual address space unused after the end of the module.
    */
-#ifdef THIS_MODULE
   Bit32u   driverStartAddr = (Bit32u) THIS_MODULE;
   unsigned size            = THIS_MODULE->size;
-#else
-  Bit32u   driverStartAddr = (Bit32u) &mod_use_count_;
-  unsigned size            = 0;  /* Actual size determined below */
-#endif
   Bit32u   driverStartAddrPageAligned = driverStartAddr & ~0xfff;
 
   int    nPages;
@@ -461,7 +345,6 @@ retrieveKernelModulePages(void)
   return( 1 ); /* OK. */
 }
 
-
   unsigned
 retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
 {
@@ -475,6 +358,7 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
   Bit32u addr; // start_addr;
   unsigned n_pages;
   int i;
+  unsigned good;
 
   addr = (Bit32u) addr_v;
   if ( addr & 0xfff ) {
@@ -512,7 +396,7 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
     Bit32u laddr;
     unsigned long lpage;
     pgd_t *pgdPtr; pmd_t *pmdPtr; pte_t *ptePtr;
-    pgd_t  pgdVal; pmd_t  pmdVal; pte_t  pteVal;
+    pte_t  pteVal;
 
     laddr = KERNEL_OFFSET + ((Bit32u) addr);
 
@@ -523,32 +407,38 @@ retrievePhyPages(Bit32u *page, int max_pages, void *addr_v, unsigned size)
      * lock on the page tables themselves.  Older ones have to do
      * a "big kernel lock".
      */
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,3,10)
     spin_lock(&init_mm.page_table_lock);
-#else
-    lock_kernel(); /* Big kernel lock. */
-#endif
+
+    good = 0;
     pgdPtr = pgd_offset(&init_mm, lpage);
-    pmdPtr = pmd_offset(pgdPtr, lpage);
-    ptePtr = pte_offset(pmdPtr, lpage);
+/* Fixme: clean up page walk for various types of page tables.
+ * Fixme: check for PAT bits.  We should have separate walks for PAE
+ * Fixme: mode later, so don't need the 3 level walk below for PAE=0.
+ */
+    /* Check that PS=0(4k), P=1(present). */
+    if ( (pgdPtr->pgd & 0x81) == 0x1 ) {
+      pmdPtr = pmd_offset(pgdPtr, lpage);
+      if ( pmd_val(*pmdPtr) & 1 ) {
+        ptePtr = pte_offset(pmdPtr, lpage);
+        if ( pte_val(*ptePtr) & 1 ) {
+          pteVal = *ptePtr;
+          good = 1;
+          }
+        }
+      }
 
-    pgdVal = *pgdPtr;
-    pmdVal = *pmdPtr;
-    pteVal = *ptePtr;
 
-#if LINUX_VERSION_CODE >= VERSION_CODE(2,3,10)
     spin_unlock(&init_mm.page_table_lock);
-#else
-    unlock_kernel(); /* Big kernel unlock. */
-#endif
 
-    if ( !(pgdVal.pgd & 1) ||
-         !(pmdVal.pmd & 1) ||
-         !(pteVal.pte_low & 1) ) {
+
+    if ( !good ) {
       if (size == 0)
         return i; /* Report number of pages until area ended. */
+/* Fixme: clean up printk for bad pages. */
       printk(KERN_ERR "plex86: retrievePhyPages: "
-                      "PDE.P==0: i=%u, n=%u laddr=0x%x\n", i, n_pages, laddr);
+             "found a page table entry with an unexpected value.\n");
+      printk(KERN_ERR "plex86: If your kernel is PAE enabled, boot with "
+             "mem=nopentium.\n");
       return 0; /* Error, ran into unmapped page in memory range. */
       }
 
@@ -708,13 +598,6 @@ hostOSKernelOffset(void)
   void
 hostOSModuleCountReset(vm_t *vm, void *inode, void *filp)
 {
-#if LINUX_VERSION_CODE < VERSION_CODE(2,4,0)
-  while (MOD_IN_USE) {
-    MOD_DEC_USE_COUNT;
-    }
-    
-  MOD_INC_USE_COUNT; /* bump back to 1 so release can decrement */
-#endif
 }
 
   unsigned long
